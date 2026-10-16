@@ -1,0 +1,42 @@
+# =============================================================================
+# espSWctrl - build defaults
+#
+# sdkconfig.defaults is applied whenever sdkconfig is (re)generated, so these
+# settings survive fullclean / re-clone / moving to another machine.
+# Keep this file pure ASCII.
+# =============================================================================
+
+# --- Flash size -------------------------------------------------------------
+# ESP32-C3 modules are commonly 4MB but 2MB parts exist.
+# Stay at 2MB: if the module is really 4MB we only waste space. The reverse
+# (configure 4MB, have 2MB) fails mid-flash.
+# Bump to 4MB once the module marking is confirmed.
+CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="2MB"
+
+# --- Partition table --------------------------------------------------------
+# Stock partitions_singleapp.csv gives the app only 1MB (0x100000), which does
+# not fit MQTT + mbedTLS + cJSON. The _large variant gives 1500K (0x180000).
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_PARTITION_TABLE_FILENAME="partitions_singleapp_large.csv"
+
+# --- Optimization -----------------------------------------------------------
+# ESP-IDF defaults to -Og (debug friendly), which built this firmware to 1.05MB.
+# -Os lands around 700KB with identical behaviour, just harder to single-step.
+# For debugging, swap this for CONFIG_COMPILER_OPTIMIZATION_DEBUG=y.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# Assertions stay ON. This is safety relevant: a stuck GPIO must be catchable by
+# assertion / watchdog, so a few extra KB is the right trade.
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
+
+# --- Console ----------------------------------------------------------------
+# COM11 on this board is the chip's native USB Serial/JTAG (VID 303A:PID 1001),
+# not a USB-UART bridge. The USB-Serial-JTAG backend only accepts input when it
+# is the PRIMARY console; as a secondary one it is output-only and the REPL
+# (used by the runtime config commands) would never read a line.
+# So: USB-Serial/JTAG primary, UART0 off, no secondary.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_UART_DEFAULT=n
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_USJ_ENABLE_USB_SERIAL_JTAG=y
