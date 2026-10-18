@@ -1,0 +1,6 @@
+[toolchain]
+# 钉死版本，不用浮动的 nightly —— 上游 nightly 偶尔会把 esp target 编挂。
+# Phase 0 探针实际编过并量出 1.128MB 的那一版，已验证可用。
+channel = "nightly-2026-09-20"
+components = ["rust-src"]
+profile = "minimal"

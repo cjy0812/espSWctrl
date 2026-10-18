@@ -1,0 +1,37 @@
+[build]
+# ESP32-C3 是 RISC-V，走上游 target 就够，不需要 espup 的 Xtensa fork。
+target = "riscv32imc-esp-espidf"
+
+[target.riscv32imc-esp-espidf]
+# ldproxy 负责把 rustc 的链接调用翻译成 IDF 的链接脚本 + 组件列表。
+linker = "ldproxy"
+# 本机没装 espflash（cargo bin 里没有）。烧录暂时用 IDF 自带 esptool：
+#   G:\Dev\ESP\Espressif\python_env\idf6.1_py3.14_env\Scripts\esptool.exe
+# 想用 `cargo run` 一键烧录再 `cargo install espflash`。
+# runner = "espflash flash --monitor --chip esp32c3 --port COM11"
+
+[unstable]
+# stable 编不了 esp target（can't find crate for `core`），必须 build-std。
+build-std = ["std", "panic_abort"]
+# 注：故意【不】开 panic_immediate_abort。
+# 它能再省 ~10-20%，但会把 panic 信息一起抹掉 —— 这是一个
+# 安全相关设备（GPIO 卡高会强断电），出问题时串口上那行 panic
+# 比几百 KB flash 值钱得多。体积真不够时再回来开。
+
+[env]
+# ⚠️ 这一行不是可选的，去掉它整个构建会静默用错配置。
+#
+# embuild::cargo::workspace_dir()（embuild-0.33.2/src/cargo.rs:432）在
+# CARGO_WORKSPACE_DIR 未设置时，靠从 OUT_DIR 往上 pop 6 层来猜 workspace 根。
+# 我们为绕开 esp-idf-sys 的 Windows 路径长度限制，把 target 搬到了 N:/p，
+# 于是 pop 6 层算出来是 N:/p —— 而不是 G:\GitHub\espSWctrl。
+#
+# 后果（实测，2026-10-17）：esp-idf-sys 去 N:/p 找 sdkconfig / sdkconfig.defaults，
+# 找不到就退回 IDF 纯默认值，仓库里两份配置全部被无视：
+#   * 分区表回落成 partitions_singleapp.csv —— app 分区只有 1MB 而不是 1500K
+#   * 主控制台回落成 UART0，板子的 USB-Serial-JTAG 降级为「副控制台」，
+#     只出不进 → Phase 2 的 REPL 在 COM11 上敲不进任何命令
+#     → 且 bindgen 因此不导出 esp_console_new_repl_usb_serial_jtag（E0425）
+# 这正是 esp-idf-sys 的 BUILD-OPTIONS.md:113-124 描述的情形，按其解法设置：
+# relative=true + 空值 = 以 .cargo/ 的父目录为根，即 crate 根。
+CARGO_WORKSPACE_DIR = { value = "", relative = true }

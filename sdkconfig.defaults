@@ -7,12 +7,15 @@
 # =============================================================================
 
 # --- Flash size -------------------------------------------------------------
-# ESP32-C3 modules are commonly 4MB but 2MB parts exist.
-# Stay at 2MB: if the module is really 4MB we only waste space. The reverse
-# (configure 4MB, have 2MB) fails mid-flash.
-# Bump to 4MB once the module marking is confirmed.
-CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="2MB"
+# Confirmed 4MB on 2026-10-17 from the boot log itself, which is ground truth:
+#   W spi_flash: Detected size(4096k) larger than the size in the binary image
+#                 header(2048k). Using the size in the binary image header.
+# The chip reports 4096k; 2MB was a conservative guess while the part was
+# unconfirmed. Now that it is measured, raise it -- the failure mode of
+# under-configuring is that the app partition cannot grow past ~1.4MB, and
+# Phase 3 (WiFi + mbedTLS + MQTT) is projected at ~1.13MB, uncomfortably close.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
 
 # --- Partition table --------------------------------------------------------
 # Stock partitions_singleapp.csv gives the app only 1MB (0x100000), which does
@@ -40,3 +43,16 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_UART_DEFAULT=n
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 CONFIG_USJ_ENABLE_USB_SERIAL_JTAG=y
+
+# --- IPv6 SLAAC (DDNS AAAA) -------------------------------------------------
+# Double gate for IPv6:
+#   1. CONFIG_LWIP_IPV6=y            - the whole lwIP IPv6 stack is compiled in.
+#   2. CONFIG_LWIP_IPV6_AUTOCONFIG=y - SLAAC: accept router advertisements and
+#      auto-generate a global address from the RA prefix.
+# Espressif ships (2) OFF by default on purpose:
+#   "users might end up with devices, globally accessible on the internet,
+#    without even knowing about it"
+# DDNS needs a real global AAAA to publish, so we turn it on explicitly here.
+# It stays OFF unless BOTH this and the runtime enable_ipv6 flag are set
+# (see DDNS_IPV6_COMPILE_ENABLE / DdnsClient::enable_ipv6).
+CONFIG_LWIP_IPV6_AUTOCONFIG=y

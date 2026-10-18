@@ -1,0 +1,45 @@
+[package]
+name = "powerswitch"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+
+# 不发布，纯固件
+publish = false
+
+# 显式声明自己是 workspace root。
+# 没有这一段，嵌在里面的 rust-probe/ 会被 cargo 当成「本仓库的另一个成员」，
+# 两边互相认为对方是 workspace 而报错。exclude 把它隔离出去。
+[workspace]
+members = ["."]
+exclude = ["rust-probe"]
+
+[dependencies]
+esp-idf-svc = "0.53"
+log = "0.4"
+
+[build-dependencies]
+# esp-idf-sys 的构建脚本依赖这个来把 IDF 的环境变量导给 rustc。
+embuild = "0.33"
+
+# ---- size profile ----
+# Phase 0 探针实测：这套配置下 WiFi+SNTP+HTTPS+MQTT/TLS 的 app image = 1.128 MB，
+# 分区上限 1.464 MB，余量 354 KB。业务逻辑 + serde_json + console 还要吃一些，
+# 所以这里每一项都不是可选的。
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+incremental = false
+debug = false
+
+# 别用默认 dev —— 未优化体积能到几十 MB，烧都烧不进去
+[profile.dev]
+opt-level = "z"
+debug = false
+
+[package.metadata.esp-idf-sys]
+esp_idf_sdkconfig = "sdkconfig"
+esp_idf_version = "6.1"

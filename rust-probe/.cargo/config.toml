@@ -1,0 +1,10 @@
+[build]
+target = "riscv32imc-esp-espidf"
+
+[target.riscv32imc-esp-espidf]
+linker = "ldproxy"
+runner = "espflash flash --monitor --chip esp32c3 --port COM11"
+
+# ESP32-C3 走上游 nightly，必须 build-std
+[unstable]
+build-std = ["std", "panic_abort"]
