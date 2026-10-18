@@ -35,3 +35,13 @@ build-std = ["std", "panic_abort"]
 # 这正是 esp-idf-sys 的 BUILD-OPTIONS.md:113-124 描述的情形，按其解法设置：
 # relative=true + 空值 = 以 .cargo/ 的父目录为根，即 crate 根。
 CARGO_WORKSPACE_DIR = { value = "", relative = true }
+
+# 让 esp-idf-sys 的构建脚本生成带 espressif/mqtt 的 idf_component.yml。
+# 不设这个变量时 esp-idf-sys 不会写 idf_component.yml（cargo_driver.rs:370-388
+# 无 remote component 时会 remove_file），esp-mqtt 因此不会进构建。
+# relative=true 让它以 crate 根为基准解析，绝对/相对路径都能用；
+# force=true 防止被外部环境覆盖。
+# ⚠️ 只改 extra-components.toml 的内容不会触发 build script 重跑，
+# 只有改这个变量的值才会（track_env_var）。升级 mqtt 版本时要清
+# $CARGO_TARGET_DIR/riscv32imc-esp-espidf/release/build/esp-idf-sys。
+ESP_IDF_SYS_EXTRA_COMPONENTS_FILE = { value = "extra-components.toml", relative = true, force = true }

@@ -68,3 +68,16 @@ CONFIG_LWIP_IPV6_AUTOCONFIG=y
 # GTS Root R4 already in the bundle (same public key), ending the chain there
 # instead of walking up through the cross-signed cert. Costs ~700 B heap.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
+
+# --- TLS: certificate expiry check -------------------------------------------
+# MBEDTLS_HAVE_TIME_DATE defaults to OFF in ESP-IDF, which compiles the whole
+# notBefore/notAfter check out of the certificate verification path. That means
+# an expired or not-yet-valid certificate would be accepted silently.
+# Turn it ON so the MQTT broker certificate is actually time-validated.
+#
+# Cost: mbedTLS uses libc time(). If SNTP has not synced yet the clock reads
+# 1970, every certificate looks "not yet valid" and the TLS handshake fails.
+# The device already needs correct time for the cmd `ts` window, so this is not
+# a new failure mode -- but it makes "SNTP synced" a hard precondition before
+# the MQTT client may connect (enforced in mqtt_tick).
+CONFIG_MBEDTLS_HAVE_TIME_DATE=y
