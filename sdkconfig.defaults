@@ -56,3 +56,15 @@ CONFIG_USJ_ENABLE_USB_SERIAL_JTAG=y
 # It stays OFF unless BOTH this and the runtime enable_ipv6 flag are set
 # (see DDNS_IPV6_COMPILE_ENABLE / DdnsClient::enable_ipv6).
 CONFIG_LWIP_IPV6_AUTOCONFIG=y
+
+# --- TLS: cross-signed root verification -------------------------------------
+# api005.dnshe.com serves a chain whose root "GTS Root R4" is cross-signed by
+# the legacy "GlobalSign Root CA" (R1), which is NOT in the ESP certificate
+# bundle (we ship R3/R5/R6/R46/E46 only; cacrt_deprecated.pem is empty).
+# Without this, TLS fails with:
+#   esp-x509-crt-bundle: No matching trusted root certificate found
+#   mbedtls_ssl_handshake returned -0x3000
+# With it, the CA callback resolves WE1 directly to the self-signed
+# GTS Root R4 already in the bundle (same public key), ending the chain there
+# instead of walking up through the cross-signed cert. Costs ~700 B heap.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
