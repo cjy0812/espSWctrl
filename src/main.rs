@@ -91,6 +91,11 @@ fn other<E: std::fmt::Display>(e: E) -> CmdError {
 /// 在 REPL 回调里做网络 I/O 会卡住串口，还可能和主循环抢同一个连接。
 static DDNS_NOW: AtomicBool = AtomicBool::new(false);
 
+/// 「DDNS 没配记录名」这条提示是否已经打过。
+///
+/// 主循环 5 秒一轮，不加这个 once 会把日志刷爆。
+static HOST_LOGGED: AtomicBool = AtomicBool::new(false);
+
 /// 时间同步失败后隔多久再试。
 ///
 /// 不能跟着 5 秒主循环周期重试：`WifiManager::sync()` 一次最长阻塞
@@ -192,15 +197,23 @@ fn ddns_tick(cfg: &Cfg, next_due: &mut Instant) {
         return;
     }
 
-    let host = cfg.ddns_host().unwrap_or_default();
     // token 只在这个局部变量里存在，不进任何日志。
     let token = cfg.ddns_token().unwrap_or_default();
-    if host.is_empty() || token.is_empty() {
+    if token.is_empty() {
         if forced {
-            log::warn!("DDNS 缺少 host 或 token，忽略 `ddns now`");
+            log::warn!("DDNS 缺少 token，忽略 `ddns now`");
         }
         return;
     }
+
+    // host 只是给人看的标签：请求里从不发送它，token 已经绑定了记录。
+    // 所以没配记录名不该挡住更新，只提示一次（主循环 5 秒一轮，不加 once 会刷爆日志）。
+    let host = cfg.ddns_host().unwrap_or_default();
+    if host.is_empty() && !HOST_LOGGED.swap(true, Ordering::Relaxed) {
+        log::info!("DDNS 未配置记录名，仍按 token 绑定的记录推送（host 仅用于日志）");
+    }
+    // 只影响日志文案：hostname 仅用于 `DDNS 已更新：{}`，请求里不会发送。
+    let host_label = if host.is_empty() { "(未命名)".to_string() } else { host };
 
     // 时钟没对上时 TLS 必然因证书有效期失败，没必要发一次注定失败的请求。
     if unix_now() == 0 {
@@ -215,7 +228,7 @@ fn ddns_tick(cfg: &Cfg, next_due: &mut Instant) {
     let interval_s = cfg.ddns_interval_s().unwrap_or(consts::DDNS_INTERVAL_DEFAULT_S) as u64;
 
     // 每轮重建 client：provider 持有 token 的副本，短生命周期能少一份常驻内存。
-    let client = ddns::DdnsClient::new(ddns::DnsheProvider::new(token, host), interval_s);
+    let client = ddns::DdnsClient::new(ddns::DnsheProvider::new(token, host_label), interval_s);
 
     // 只做 blind v4：服务端按请求来源 IP 绑定记录，本机不查外网 IP。
     // **不做 AAAA** —— IPv6 在这块板子上没验证过。
