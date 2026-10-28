@@ -1,6 +1,0 @@
-# 让 esp-idf-sys 的构建脚本读取并生成 idf_component.yml。
-# 用 ESP_IDF_SYS_EXTRA_COMPONENTS_FILE 指定本文件 —— 该环境变量被 track_env_var 跟踪，
-# 改了它才会强制 esp-idf-sys 重新跑构建脚本（改根 Cargo.toml 不会）。
-# 只给 name+version，交给 component manager 自己下载，避免相对路径解析问题。
-[[extra_components]]
-remote_component = { name = "espressif/mqtt", version = "^1.1.0" }

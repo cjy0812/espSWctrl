@@ -1,8 +1,0 @@
-## 依赖声明 —— 由 ESP-IDF Component Manager 自动拉取
-## mqtt 自 v6.0 起已移出 ESP-IDF 主体，必须显式声明。
-## cjson 在 v6.1 中不再是内置组件，同样需要声明。
-dependencies:
-  idf:
-    version: ">=6.1"
-  espressif/mqtt: "^1.1.0"
-  espressif/cjson: "^1.7.19"
