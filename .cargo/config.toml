@@ -5,10 +5,11 @@ target = "riscv32imc-esp-espidf"
 [target.riscv32imc-esp-espidf]
 # ldproxy 负责把 rustc 的链接调用翻译成 IDF 的链接脚本 + 组件列表。
 linker = "ldproxy"
-# 本机没装 espflash（cargo bin 里没有）。烧录暂时用 IDF 自带 esptool：
-#   G:\Dev\ESP\Espressif\python_env\idf6.1_py3.14_env\Scripts\esptool.exe
-# 想用 `cargo run` 一键烧录再 `cargo install espflash`。
-# runner = "espflash flash --monitor --chip esp32c3 --port COM11"
+# 本机没装 espflash（cargo bin 里没有）。烧录用 IDF 自带 esptool：
+#   %IDF_PYTHON_ENV_PATH%\Scripts\python.exe -m esptool --chip esp32c3 -p COM3 ...
+# 想用 `cargo run` 一键烧录再 `cargo install espflash`（下面的 runner 是模板，
+# 端口按实际改；本机板子是 ESP32-C3 原生 USB-Serial-JTAG，不是 CP210x）：
+# runner = "espflash flash --monitor --chip esp32c3 --port COM3"
 
 [unstable]
 # stable 编不了 esp target（can't find crate for `core`），必须 build-std。
