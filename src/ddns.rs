@@ -101,17 +101,26 @@ pub struct DdnsRecord {
 impl DdnsRecord {
     /// A 记录、blind push（服务端认来源 IP）。
     pub fn blind_v4() -> Self {
-        Self { record: RecordType::A, ip: None }
+        Self {
+            record: RecordType::A,
+            ip: None,
+        }
     }
 
     /// A 记录、显式推送指定 IPv4。
     pub fn explicit_v4(ip: std::net::Ipv4Addr) -> Self {
-        Self { record: RecordType::A, ip: Some(IpAddr::V4(ip)) }
+        Self {
+            record: RecordType::A,
+            ip: Some(IpAddr::V4(ip)),
+        }
     }
 
     /// AAAA 记录、显式推送指定 IPv6。
     pub fn explicit_v6(ip: std::net::Ipv6Addr) -> Self {
-        Self { record: RecordType::Aaaa, ip: Some(IpAddr::V6(ip)) }
+        Self {
+            record: RecordType::Aaaa,
+            ip: Some(IpAddr::V6(ip)),
+        }
     }
 }
 
@@ -236,10 +245,16 @@ impl DdnsError {
             DdnsError::FatalConfig { status, detail } => {
                 format!("FATAL 配置错误 HTTP {status} ({detail}) —— 停止重试，请检查 token / 记录")
             }
-            DdnsError::ServerError { status, retry_after_s } => {
+            DdnsError::ServerError {
+                status,
+                retry_after_s,
+            } => {
                 format!("服务端错误 HTTP {status}，{retry_after_s}s 后重试")
             }
-            DdnsError::Transient { status, retry_after_s } => {
+            DdnsError::Transient {
+                status,
+                retry_after_s,
+            } => {
                 format!("临时错误 HTTP {status}，{retry_after_s}s 后重试")
             }
             DdnsError::Rejected { code } => {
@@ -506,7 +521,7 @@ pub fn parse_ddns2_body(body: &str) -> Result<UpdateOutcome, DdnsError> {
         //      "good"、<good>、code=good 命中；notgood、goodness 不命中。
         //   2. 失败码优先于成功码。body 里同时出现 good 和 badauth 时按失败
         //      处理 —— 宁可漏一次更新，不可假成功。
-        find_delimited_code(&trimmed).ok_or_else(|| {
+        find_delimited_code(trimmed).ok_or_else(|| {
             DdnsError::Protocol(format!("无法识别的响应：{}", truncate(trimmed, 120)))
         })?
     } else {
@@ -719,72 +734,72 @@ fn build_dnshe_request(
     // 显式传入的 ip 优先，其次用 record 自带的
     let effective = ip.or(rec.ip.as_ref());
 
-        // ---- 家族校验 + v6 闸门 ----
-        // 顺便把「要不要显式推 IP」定下来：
-        //   A  + None     -> None      （blind push，服务端认来源 IP）
-        //   A  + Some(v4) -> Some(v4)  （显式推）
-        //   AAAA + Some(v6) -> Some(v6)（必须显式，见下）
-        let push_ip: Option<IpAddr> = match rec.record {
-            RecordType::Aaaa => {
-                if !allow_v6 {
-                    return Err(DdnsError::Local(
+    // ---- 家族校验 + v6 闸门 ----
+    // 顺便把「要不要显式推 IP」定下来：
+    //   A  + None     -> None      （blind push，服务端认来源 IP）
+    //   A  + Some(v4) -> Some(v4)  （显式推）
+    //   AAAA + Some(v6) -> Some(v6)（必须显式，见下）
+    let push_ip: Option<IpAddr> = match rec.record {
+        RecordType::Aaaa => {
+            if !allow_v6 {
+                return Err(DdnsError::Local(
                         "AAAA 更新被禁用：编译期 DDNS_IPV6_COMPILE_ENABLE 与运行期 enable_ipv6 必须同时打开"
                             .to_string(),
                     ));
-                }
-                match effective {
-                    Some(v6 @ IpAddr::V6(_)) => Some(*v6),
-                    Some(IpAddr::V4(_)) => {
-                        return Err(DdnsError::Local(
-                            "记录类型是 AAAA，但给的是 IPv4 地址".to_string(),
-                        ))
-                    }
-                    None => {
-                        return Err(DdnsError::Local(
-                            "AAAA 更新必须显式提供 IPv6 地址（服务端不对 v6 做来源 IP 推断）"
-                                .to_string(),
-                        ))
-                    }
-                }
             }
-            RecordType::A => match effective {
-                Some(v4 @ IpAddr::V4(_)) => Some(*v4),
-                Some(IpAddr::V6(_)) => {
+            match effective {
+                Some(v6 @ IpAddr::V6(_)) => Some(*v6),
+                Some(IpAddr::V4(_)) => {
                     return Err(DdnsError::Local(
-                        "记录类型是 A，但给的是 IPv6 地址".to_string(),
+                        "记录类型是 AAAA，但给的是 IPv4 地址".to_string(),
                     ))
                 }
-                None => None,
-            },
-        };
-
-        // 手工拼 JSON。IP 地址只含 0-9a-fA-F、`.`、`:`，没有需要转义的字符，
-        // 所以这里不需要 serde_json（主 crate 里也没这个依赖）。
-        let body = push_ip.map(|ip| format!("{{\"ip\":\"{ip}\"}}"));
-
-        let mut headers: Vec<(String, String)> = Vec::new();
-
-        // 唯一的凭据通道。绝不进 URL，绝不进 body。
-        headers.push((
-            // DNSHE 用自定义 header `X-DDNS-Token`，值是裸 token（无 Bearer 前缀）
-            "X-DDNS-Token".to_string(),
-            token.to_string(),
-        ));
-
-        if body.is_some() {
-            headers.push(("Content-Type".to_string(), "application/json".to_string()));
+                None => {
+                    return Err(DdnsError::Local(
+                        "AAAA 更新必须显式提供 IPv6 地址（服务端不对 v6 做来源 IP 推断）"
+                            .to_string(),
+                    ))
+                }
+            }
         }
+        RecordType::A => match effective {
+            Some(v4 @ IpAddr::V4(_)) => Some(*v4),
+            Some(IpAddr::V6(_)) => {
+                return Err(DdnsError::Local(
+                    "记录类型是 A，但给的是 IPv6 地址".to_string(),
+                ))
+            }
+            None => None,
+        },
+    };
 
-        let content_len = body.as_deref().map(str::len).unwrap_or(0).to_string();
-        headers.push(("Content-Length".to_string(), content_len));
+    // 手工拼 JSON。IP 地址只含 0-9a-fA-F、`.`、`:`，没有需要转义的字符，
+    // 所以这里不需要 serde_json（主 crate 里也没这个依赖）。
+    let body = push_ip.map(|ip| format!("{{\"ip\":\"{ip}\"}}"));
 
-        let req = HttpRequest {
-            // 统一用 POST：v6 需要 body，v4 也没有理由用 GET 把参数暴露在 URL 上。
-            method: "POST",
-            url: dnshe_update_url(),
-            headers,
-            body,
-        };
+    let mut headers: Vec<(String, String)> = Vec::new();
+
+    // 唯一的凭据通道。绝不进 URL，绝不进 body。
+    headers.push((
+        // DNSHE 用自定义 header `X-DDNS-Token`，值是裸 token（无 Bearer 前缀）
+        "X-DDNS-Token".to_string(),
+        token.to_string(),
+    ));
+
+    if body.is_some() {
+        headers.push(("Content-Type".to_string(), "application/json".to_string()));
+    }
+
+    let content_len = body.as_deref().map(str::len).unwrap_or(0).to_string();
+    headers.push(("Content-Length".to_string(), content_len));
+
+    let req = HttpRequest {
+        // 统一用 POST：v6 需要 body，v4 也没有理由用 GET 把参数暴露在 URL 上。
+        method: "POST",
+        url: dnshe_update_url(),
+        headers,
+        body,
+    };
 
     // 结构性双保险：万一以后有人往 URL / body 里塞了 token，宁可发不出去。
     assert_token_absent(&req.url, token)?;
@@ -798,50 +813,46 @@ fn build_dnshe_request(
 /// DNSHE 的响应解释 —— 纯函数，不碰任何 esp 类型。
 fn parse_dnshe_response(status: u16, body: &str) -> Result<UpdateOutcome, DdnsError> {
     match status {
-            // 配置错误三兄弟：token 错 / 没权限 / 记录不存在。
-            // 重试不会好，必须停下来大声报。
-            401 | 403 | 404 => {
-                return Err(DdnsError::FatalConfig {
-                    status,
-                    detail: "token 无效、无权限，或记录不存在".to_string(),
-                })
-            }
-
-            // 限流
-            429 => {
-                return Err(DdnsError::Transient {
-                    status,
-                    retry_after_s: DDNS_429_BACKOFF_S,
-                })
-            }
-
-            // 5xx：至少退避 10 分钟
-            s if (500..=599).contains(&s) => {
-                return Err(DdnsError::ServerError {
-                    status: s,
-                    retry_after_s: DDNS_5XX_BACKOFF_S,
-                })
-            }
-
-            // 其他 4xx：可重试，但至少等 60 秒
-            s if (400..500).contains(&s) => {
-                return Err(DdnsError::Transient {
-                    status: s,
-                    retry_after_s: DDNS_MIN_INTERVAL_S,
-                })
-            }
-
-            // 2xx：继续看 body（good / nochg）
-            s if (200..300).contains(&s) => {}
-
-            s => {
-                return Err(DdnsError::Protocol(format!(
-                    "意外的 HTTP 状态码 {s}"
-                )))
-            }
+        // 配置错误三兄弟：token 错 / 没权限 / 记录不存在。
+        // 重试不会好，必须停下来大声报。
+        401 | 403 | 404 => {
+            return Err(DdnsError::FatalConfig {
+                status,
+                detail: "token 无效、无权限，或记录不存在".to_string(),
+            })
         }
 
-        parse_ddns2_body(body)
+        // 限流
+        429 => {
+            return Err(DdnsError::Transient {
+                status,
+                retry_after_s: DDNS_429_BACKOFF_S,
+            })
+        }
+
+        // 5xx：至少退避 10 分钟
+        s if (500..=599).contains(&s) => {
+            return Err(DdnsError::ServerError {
+                status: s,
+                retry_after_s: DDNS_5XX_BACKOFF_S,
+            })
+        }
+
+        // 其他 4xx：可重试，但至少等 60 秒
+        s if (400..500).contains(&s) => {
+            return Err(DdnsError::Transient {
+                status: s,
+                retry_after_s: DDNS_MIN_INTERVAL_S,
+            })
+        }
+
+        // 2xx：继续看 body（good / nochg）
+        s if (200..300).contains(&s) => {}
+
+        s => return Err(DdnsError::Protocol(format!("意外的 HTTP 状态码 {s}"))),
+    }
+
+    parse_ddns2_body(body)
 }
 
 // ============================================================================
@@ -953,11 +964,7 @@ impl<P: DdnsProvider> DdnsClient<P> {
     }
 
     /// 纯函数：只构造请求，不发出去。
-    pub fn plan(
-        &self,
-        rec: &DdnsRecord,
-        ip: Option<&IpAddr>,
-    ) -> Result<HttpRequest, DdnsError> {
+    pub fn plan(&self, rec: &DdnsRecord, ip: Option<&IpAddr>) -> Result<HttpRequest, DdnsError> {
         self.provider.build_request(rec, ip)
     }
 
@@ -995,9 +1002,7 @@ impl<P: DdnsProvider> DdnsClient<P> {
 
 #[cfg(target_os = "espidf")]
 mod esp_impl {
-    use super::{
-        DdnsError, HttpRequest, DDNS_HTTP_TIMEOUT_S, DDNS_MAX_BODY_BYTES,
-    };
+    use super::{DdnsError, HttpRequest, DDNS_HTTP_TIMEOUT_S, DDNS_MAX_BODY_BYTES};
     use core::time::Duration;
     use esp_idf_svc::http::client::{Configuration, EspHttpConnection};
     use esp_idf_svc::http::Method;
@@ -1028,9 +1033,7 @@ mod esp_impl {
             "GET" => Method::Get,
             "POST" => Method::Post,
             "PUT" => Method::Put,
-            other => {
-                return Err(DdnsError::Local(format!("不支持的 HTTP 方法：{other}")))
-            }
+            other => return Err(DdnsError::Local(format!("不支持的 HTTP 方法：{other}"))),
         };
 
         let body: &str = req.body.as_deref().unwrap_or("");
@@ -1117,11 +1120,10 @@ mod tests {
 
     #[test]
     fn parses_success_with_trailing_newline_and_spaces() {
-        let r = dnshe().parse_response(200, "  good   203.0.113.7\r\n").unwrap();
-        assert_eq!(
-            r.ip(),
-            Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)))
-        );
+        let r = dnshe()
+            .parse_response(200, "  good   203.0.113.7\r\n")
+            .unwrap();
+        assert_eq!(r.ip(), Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7))));
     }
 
     // ---- 2. nochg = 成功，但不是变更 ----
@@ -1141,10 +1143,7 @@ mod tests {
         assert!(!r.is_change(), "nochg 不能算作一次 DNS 变更");
 
         // 走 next_delay 也应该按「一切正常」调度，而不是退避
-        assert_eq!(
-            next_delay_s(&Ok(r), 300),
-            NextDelay::Scheduled(300)
-        );
+        assert_eq!(next_delay_s(&Ok(r), 300), NextDelay::Scheduled(300));
     }
 
     // ---- 3. 401 / 403 / 404 = FATAL，停止重试 ----
@@ -1197,10 +1196,7 @@ mod tests {
             let wait = err
                 .retry_after_s()
                 .unwrap_or_else(|| panic!("HTTP {status} 应该给出重试间隔"));
-            assert!(
-                wait >= 600,
-                "HTTP {status} 的退避 {wait}s 少于 10 分钟"
-            );
+            assert!(wait >= 600, "HTTP {status} 的退避 {wait}s 少于 10 分钟");
 
             // 走完整决策路径也要满足
             match next_delay_s(&Err(err), 300) {
@@ -1251,19 +1247,13 @@ mod tests {
             // 但即使有，只要是被掩码过的形态就还能接受 —— 所以这里
             // 断言的是「完整 token 一定不出现」。
             if label == &"HttpRequest Debug" || label == &"token_masked" {
-                assert!(
-                    !s.contains(TOKEN),
-                    "{label} 泄露了完整 token：{s}"
-                );
+                assert!(!s.contains(TOKEN), "{label} 泄露了完整 token：{s}");
                 assert!(
                     s.contains("sk_live_"),
                     "{label} 应该保留前 8 字符用于辨识：{s}"
                 );
             } else {
-                assert!(
-                    !s.contains(TOKEN),
-                    "{label} 里出现了完整 token：{s}"
-                );
+                assert!(!s.contains(TOKEN), "{label} 里出现了完整 token：{s}");
             }
         }
 
@@ -1318,7 +1308,11 @@ mod tests {
             .filter(|(_, v)| v.contains(TOKEN))
             .map(|(k, _)| k)
             .collect();
-        assert_eq!(carriers.len(), 1, "token 出现在多个 header 里：{carriers:?}");
+        assert_eq!(
+            carriers.len(),
+            1,
+            "token 出现在多个 header 里：{carriers:?}"
+        );
         assert_eq!(carriers[0], "X-DDNS-Token");
     }
 
@@ -1390,14 +1384,20 @@ mod tests {
     #[test]
     fn v6_requires_an_explicit_ip() {
         let p = dnshe_v6();
-        let rec = DdnsRecord { record: RecordType::Aaaa, ip: None };
+        let rec = DdnsRecord {
+            record: RecordType::Aaaa,
+            ip: None,
+        };
         let err = p.build_request(&rec, None).unwrap_err();
 
         assert!(
             matches!(err, DdnsError::Local(_)),
             "v6 不给 IP 必须报本地错，实际 {err:?}"
         );
-        assert!(err.summary().contains("必须显式"), "错误信息要说清楚：{err}");
+        assert!(
+            err.summary().contains("必须显式"),
+            "错误信息要说清楚：{err}"
+        );
         // 本地错重试无用
         assert_eq!(next_delay_s(&Err(err), 300), NextDelay::Stop);
     }
@@ -1413,10 +1413,7 @@ mod tests {
         assert!(!dnshe().supports_v6(), "运行期默认必须关掉 v6");
 
         // 只开运行期、编译期还关着 -> 依然不可用
-        assert!(
-            !dnshe_v6().supports_v6(),
-            "只开一道闸门不能启用 v6"
-        );
+        assert!(!dnshe_v6().supports_v6(), "只开一道闸门不能启用 v6");
 
         // 而且 AAAA 请求会被直接拒绝
         let rec = DdnsRecord::explicit_v6(Ipv6Addr::LOCALHOST);
@@ -1427,7 +1424,10 @@ mod tests {
     #[test]
     fn rejects_mismatched_address_families() {
         // A 记录 + v6 地址
-        let rec = DdnsRecord { record: RecordType::A, ip: None };
+        let rec = DdnsRecord {
+            record: RecordType::A,
+            ip: None,
+        };
         let v6 = IpAddr::V6(Ipv6Addr::LOCALHOST);
         assert!(matches!(
             dnshe().build_request(&rec, Some(&v6)).unwrap_err(),
@@ -1436,7 +1436,10 @@ mod tests {
 
         // AAAA 记录 + v4 地址（这里必须用开了 v6 的 provider，
         // 否则会先被闸门拦下，测不到家族校验）
-        let rec6 = DdnsRecord { record: RecordType::Aaaa, ip: None };
+        let rec6 = DdnsRecord {
+            record: RecordType::Aaaa,
+            ip: None,
+        };
         let v4 = IpAddr::V4(Ipv4Addr::LOCALHOST);
         assert!(matches!(
             dnshe_v6().build_request(&rec6, Some(&v4)).unwrap_err(),

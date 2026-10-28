@@ -19,6 +19,12 @@
 //!   把原因编码进 [`CmdError`]，由调用方决定怎么记日志。
 //! - C 版通过全局变量保存 device_id / 时间同步标志；这里收进 [`CmdVerifier`]。
 
+// 整个模块在 `src/mqtt.rs`（Phase 5）落地前没有调用者，因此是传递性死代码。
+// 这里用模块级 allow 而不是逐项标注：本模块 476 行里除了常量几乎全部未使用，
+// 逐项标注反而淹没真正的信号。
+// **Phase 5 接线完成后必须删掉这一行**，让死代码告警恢复。
+#![allow(dead_code)]
+
 use crate::consts::{CMD_TTL_DEFAULT, NONCE_HISTORY, PULSE_MS_MAX};
 
 /// 期望 topic 的缓冲长度，与 C 版 `static char s_expected_topic[96]` 对齐。
@@ -146,7 +152,7 @@ impl CmdVerifier {
     }
 
     fn nonce_seen(&self, h: u32) -> bool {
-        self.nonce_ring.iter().any(|&x| x == h)
+        self.nonce_ring.contains(&h)
     }
 
     fn nonce_remember(&mut self, h: u32) {
@@ -277,7 +283,11 @@ impl<'a> JsonObj<'a> {
         }
         let obj = Self { src: t };
         // 走一遍结构校验（同时顺带确认每对 key/value 都扫得动）。
-        if obj.for_each_pair(|_, _| {}) { Some(obj) } else { None }
+        if obj.for_each_pair(|_, _| {}) {
+            Some(obj)
+        } else {
+            None
+        }
     }
 
     /// 取字符串字段。第一个匹配的键生效。
@@ -382,7 +392,7 @@ fn skip_ws(b: &[u8], mut i: usize) -> usize {
 /// 扫描一个 JSON 字符串字面量，返回（内容切片, 结束引号之后的下标）。
 ///
 /// 内容里出现反斜杠转义时返回 `None` —— 见 [`JsonObj::get_str`] 的说明。
-fn scan_string<'a>(b: &'a [u8], i: usize) -> Option<(&'a str, usize)> {
+fn scan_string(b: &[u8], i: usize) -> Option<(&str, usize)> {
     if b.get(i) != Some(&b'"') {
         return None;
     }
@@ -394,8 +404,8 @@ fn scan_string<'a>(b: &'a [u8], i: usize) -> Option<(&'a str, usize)> {
                 let s = core::str::from_utf8(&b[start..j]).ok()?;
                 return Some((s, j + 1));
             }
-            b'\\' => return None,          // 含转义 -> 拒绝
-            c if c < 0x20 => return None,  // 未转义的控制字符非法
+            b'\\' => return None,         // 含转义 -> 拒绝
+            c if c < 0x20 => return None, // 未转义的控制字符非法
             _ => j += 1,
         }
     }
@@ -433,7 +443,11 @@ fn skip_value(b: &[u8], i: usize) -> Option<usize> {
     match c {
         b'"' => skip_string(b, i),
         b'{' | b'[' => {
-            let (open, close) = if c == b'{' { (b'{', b'}') } else { (b'[', b']') };
+            let (open, close) = if c == b'{' {
+                (b'{', b'}')
+            } else {
+                (b'[', b']')
+            };
             let mut depth = 0usize;
             let mut j = i;
             let mut in_str = false;
@@ -465,8 +479,7 @@ fn skip_value(b: &[u8], i: usize) -> Option<usize> {
             // 数字 / true / false / null：扫到分隔符为止，不校验形态，
             // 由 get_num 决定它能不能当数字用。
             let mut j = i;
-            while j < b.len()
-                && !matches!(b[j], b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n')
+            while j < b.len() && !matches!(b[j], b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n')
             {
                 j += 1;
             }

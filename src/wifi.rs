@@ -22,13 +22,14 @@
 //!    （返回 `ESP_ERR_WIFI_STATE`）。这正是「scan 永远扫到 0 个 AP」的成因之一。
 //!    主动扫描参数照抄 C 版：`show_hidden = true`、active min 100 / max 300 ms。
 //!    一次扫描最多试 `SCAN_ATTEMPTS` 次；`ESP_ERR_WIFI_STATE` 说明被连接打断，
-//! 等 `SCAN_RETRY_DELAY_MS` 再来；返回 OK 但 0 个 AP 也重试一次。
+//!    等 `SCAN_RETRY_DELAY_MS` 再来；返回 OK 但 0 个 AP 也重试一次。
 //!
 //! 3. **PMF / 安全协商**（main.c 89–113 `wifi_fill_config()`）
 //!    WPA2/WPA3 过渡模式的 AP 只有一种正确组合：`capable = true, required = false`。
 //!    - `capable = false` → 不广播 PMF 能力，过渡模式 AP 直接拒，reason = 210
 //!      （"找到 AP，但加密方式不兼容"）。
 //!    - `required = true` → 纯 WPA2 的 AP 连不上（对端不支持 PMF）。
+//!
 //!    同时认证阈值取**更强**的那一档：`WPA2WPA3Personal`
 //!    （在 esp-idf-svc 里映射到 `WIFI_AUTH_WPA2_WPA3_PSK`），
 //!    它落在驱动 `threshold.authmode` 上。有密码才设，开放网络用 `None`。
@@ -217,6 +218,7 @@ impl NetUpWatch {
     ///
     /// 成本：每次一次 FFI 调用（`esp_netif_get_handle_from_ifkey` +
     /// `esp_netif_get_ip_info`，都是本地查表，不发包）。主循环 5s 一次，可忽略。
+    #[allow(dead_code)] // 事件路径的便捷入口；main 直接用 is_up_live()
     pub fn is_up(&self) -> bool {
         self.is_up_live()
     }
@@ -440,22 +442,18 @@ impl<'d> WifiManager<'d> {
         // 只有 capable=true / required=false 两边都通。
         let secured = !password.is_empty();
         let client = ClientConfiguration {
-            ssid: ssid
-                .try_into()
-                .map_err(|_| WifiError::Esp(sys::EspError::from_infallible::<{
-                    sys::ESP_ERR_INVALID_ARG
-                }>()))?,
+            ssid: ssid.try_into().map_err(|_| {
+                WifiError::Esp(sys::EspError::from_infallible::<{ sys::ESP_ERR_INVALID_ARG }>())
+            })?,
             bssid: None,
             auth_method: if secured {
                 AuthMethod::WPA2WPA3Personal
             } else {
                 AuthMethod::None
             },
-            password: password
-                .try_into()
-                .map_err(|_| WifiError::Esp(sys::EspError::from_infallible::<{
-                    sys::ESP_ERR_INVALID_ARG
-                }>()))?,
+            password: password.try_into().map_err(|_| {
+                WifiError::Esp(sys::EspError::from_infallible::<{ sys::ESP_ERR_INVALID_ARG }>())
+            })?,
             channel: None,
             // 完整扫描 + 按信号排序：热点多的环境里比 fast scan 可靠。
             scan_method: ScanMethod::CompleteScan(ScanSortMethod::Signal),
@@ -509,7 +507,7 @@ impl<'d> WifiManager<'d> {
     /// 所以实际动作拆到这里；[`Self::apply_tx_power`] 退化成用常量的薄封装。
     pub fn set_tx_power(&self, dbm: i8) -> WifiResult<()> {
         // 驱动只接受 int8_t，且实际会被量化到 {8,20,28,...,80}。
-        let raw = (dbm * 4) as i8;
+        let raw = dbm * 4;
         unsafe {
             sys::esp!(sys::esp_wifi_set_max_tx_power(raw))?;
         }
@@ -538,6 +536,8 @@ impl<'d> WifiManager<'d> {
     /// ⚠️ `wait_netif_up()` 内部会阻塞当前任务。如果调用方在 app_main
     /// 里直接用，记得本项目开了 30s 任务看门狗（trigger_panic）——
     /// 不要把超时设得比看门狗还长而不喂狗。
+    // 故意不调用：`main` 用 `net_up_watch` 轮询，避免 30s 阻塞撞上看门狗。
+    #[allow(dead_code)]
     pub fn wait_netif_up(&self) -> WifiResult<()> {
         self.wifi.wait_netif_up()?;
         self.mark_net_up();
@@ -593,7 +593,7 @@ impl<'d> WifiManager<'d> {
         // ---- 扫描参数，逐项对照 C 版 main.c:234–242 ----
         let scan_config = ScanConfig {
             bssid: None,
-            ssid: None, // 不限定 SSID：要看到所有 AP
+            ssid: None,    // 不限定 SSID：要看到所有 AP
             channel: None, // 0 = 全信道
             // 主动扫描，每信道 100/300 ms。被动扫描在拥挤环境里太慢。
             scan_type: ScanType::Active {
@@ -664,7 +664,10 @@ impl<'d> WifiManager<'d> {
 
         if !ran {
             // 三次全被拒：结果不可信，不能据此判断射频好坏。
-            log::error!("{} 次扫描全部被驱动拒绝，结果无效（射频状态未知）", SCAN_ATTEMPTS);
+            log::error!(
+                "{} 次扫描全部被驱动拒绝，结果无效（射频状态未知）",
+                SCAN_ATTEMPTS
+            );
             return Err(last_err.unwrap_or(WifiError::NotStarted));
         }
 
@@ -686,6 +689,11 @@ impl<'d> WifiManager<'d> {
     }
 
     /// 断开当前连接（不关驱动）。
+    ///
+    /// 当前无调用者：`start()` 内部的重连走自己的路径，控制台也没有
+    /// `wifi disconnect` 子命令。保留它是因为 `wifi_reconnect` 若改成
+    /// 「先断后连」会用到 —— 那样能避免旧连接上的 DHCP 租约干扰。
+    #[allow(dead_code)]
     pub fn disconnect(&mut self) -> WifiResult<()> {
         self.wifi.disconnect()?;
         self.shared.net_up.store(false, Ordering::SeqCst);
@@ -811,6 +819,7 @@ impl TimeSync {
     }
 
     /// 已经试过几台服务器（诊断用）。
+    #[allow(dead_code)] // 诊断接口，留给 `sntp status` 之类命令
     pub fn tried(&self) -> u32 {
         self.tried
     }

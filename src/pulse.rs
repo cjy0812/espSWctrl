@@ -13,9 +13,7 @@ use esp_idf_svc::hal::gpio::{Gpio5, Output, PinDriver};
 use esp_idf_svc::sys::EspError;
 use log::{info, warn};
 
-use crate::consts::{
-    PIN_PWR_SW, PULSE_GAP_MIN_MS, PULSE_MS_DEFAULT, PULSE_MS_MAX, PULSE_MS_MIN,
-};
+use crate::consts::{PIN_PWR_SW, PULSE_GAP_MIN_MS, PULSE_MS_DEFAULT, PULSE_MS_MAX, PULSE_MS_MIN};
 
 /// 队列深度，对应 C 版 `xQueueCreate(4, ...)`
 const QUEUE_DEPTH: usize = 4;

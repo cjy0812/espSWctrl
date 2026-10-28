@@ -45,16 +45,45 @@ pub const DDNS_INTERVAL_MIN_S: u32 = 60;
 pub const DDNS_INTERVAL_MAX_S: u32 = 86_400;
 
 // ---- MQTT ----
+//
+// 本段常量在 `src/mqtt.rs`（Phase 5）落地前无消费者，统一标 `allow(dead_code)`。
+// **Phase 5 接线完成后应删除这些 allow**，让死代码信号恢复。
+// 只允许本段内的常量带 allow，不要把 `allow` 提到模块级。
+#[allow(dead_code)]
 pub const MQTT_KEEPALIVE_S: u32 = 60;
 /// 状态回读上报周期
+#[allow(dead_code)]
 pub const STATUS_PUBLISH_S: u32 = 30;
 /// 指数退避起点
+#[allow(dead_code)]
 pub const RECONNECT_BASE_MS: u32 = 1000;
 /// 退避上限（防烧 Serverless 额度）
+///
+/// 注意：C 版从未使用过这个上限，esp-mqtt 自带的 `reconnect_timeout`
+/// 也不支持封顶。要做真封顶得自己写状态机，不在 Phase 5 范围内。
+#[allow(dead_code)]
 pub const RECONNECT_MAX_MS: u32 = 60_000;
-
 // ---- 功能开关 ----
+#[allow(dead_code)]
 pub const ENABLE_STATUS_READBACK: bool = true;
+
+/// 设备 ID 的出厂默认值。
+///
+/// Q4 决策：本期接受单设备假设 —— `dev_id` 默认 `pc01`，`client_id` 固定
+/// `<dev_id>-esp32`。同一 broker 上接第二台设备时必须先 `devid` 改名，
+/// 否则两台会互相顶掉会话。多设备需求出现时再改成按 MAC 派生。
+#[allow(dead_code)] // Phase 5 接线后删除
+pub const DEFAULT_DEV_ID: &str = "pc01";
+
+/// `client_id` 的后缀。EMQX 上同一个 client_id 只能有一个连接，
+/// 两台设备撞 ID 会互相踢线，所以后缀写死、只让 dev_id 变。
+#[allow(dead_code)] // Phase 5 接线后删除
+pub const MQTT_CLIENT_SUFFIX: &str = "-esp32";
+
+/// MQTT 固定用 8883 + mqtts。端口和 scheme **不进 NVS**，
+/// 避免有人把端口改成 1883 静默降级成明文。
+#[allow(dead_code)] // Phase 5 接线后删除
+pub const MQTT_PORT: u16 = 8883;
 
 // ---- 时间同步 ----
 // 指令校验依赖时间窗（ts + ttl），所以 SNTP 必须成功，否则所有指令被拒。

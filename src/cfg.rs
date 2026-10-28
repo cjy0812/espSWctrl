@@ -25,8 +25,8 @@ use esp_idf_svc::sys::EspError;
 use log::{info, warn};
 
 use crate::consts::{
-    CMD_TTL_DEFAULT, MQTT_KEEPALIVE_S, PULSE_MS_DEFAULT, PULSE_MS_MAX, PULSE_MS_MIN,
-    STATUS_PUBLISH_S,
+    CMD_TTL_DEFAULT, DEFAULT_DEV_ID, MQTT_KEEPALIVE_S, PULSE_MS_DEFAULT, PULSE_MS_MAX,
+    PULSE_MS_MIN, STATUS_PUBLISH_S,
 };
 
 /// NVS 命名空间。改名字会导致老设备读不到已有配置，别随便动。
@@ -53,6 +53,26 @@ const KEY_DDNS_IV: &str = "ddns_iv";
 /// 常规更新周期（秒）。执行时还会被 `ddns::clamp_interval_s` 再夹一次。
 const KEY_DDNS_IVL: &str = "ddns_ivl";
 
+// ---- MQTT 键（Rust 版新增，C 版没有）----
+//
+// `mq_pass` 与 `ddns_tok` 同级：只进 NVS，日志一律掩码。
+// `mq_en` 用 u8 存布尔，与 `ddns_en` 同一范式。
+//
+// 这五个键在 `src/mqtt.rs`（Phase 5）落地前只有 setter 会被控制台调用，
+// 读取侧尚无消费者。逐项标 `allow(dead_code)` 保留全局死代码信号，
+// **Phase 5 接线完成后连同 accessor 一起撤掉这些 allow**。
+#[allow(dead_code)] // Phase 5 接线后删除
+const KEY_MQ_HOST: &str = "mq_host";
+#[allow(dead_code)] // Phase 5 接线后删除
+const KEY_MQ_USER: &str = "mq_user";
+#[allow(dead_code)] // Phase 5 接线后删除
+const KEY_MQ_PASS: &str = "mq_pass";
+#[allow(dead_code)] // Phase 5 接线后删除
+const KEY_MQ_EN: &str = "mq_en";
+/// topic 命名空间。默认 `pc01`，与 client_id `pc01-esp32` 对应。
+#[allow(dead_code)] // Phase 5 接线后删除
+const KEY_DEV_ID: &str = "dev_id";
+
 /// 802.11 SSID 最长 32 字节 + NUL，与 C 版 `char s_ssid[33]` 对齐
 const SSID_BUF: usize = 33;
 /// WPA2 密码最长 63 + NUL，与 C 版 `char s_pass[65]` 对齐
@@ -63,6 +83,22 @@ const PASS_BUF: usize = 65;
 const DDNS_HOST_BUF: usize = 96;
 /// DDNS token 缓冲。DNSHE token 是 64 个 hex 字符，留一倍余量。
 const DDNS_TOKEN_BUF: usize = 129;
+
+// 下面四个缓冲长度只在 MQTT 段（`src/mqtt.rs`，Phase 5）被消费。
+// 与 `consts.rs` 的 MQTT 段同一规矩：**Phase 5 接线后删除这些 allow**。
+/// MQTT broker 主机名缓冲（域名最长 253，但家用场景远小于此）
+#[allow(dead_code)] // Phase 5 接线后删除
+const MQ_HOST_BUF: usize = 129;
+/// MQTT username 缓冲
+#[allow(dead_code)] // Phase 5 接线后删除
+const MQ_USER_BUF: usize = 65;
+/// MQTT password 缓冲。**与 `ddns_tok` 同级：只进 NVS，日志一律掩码。**
+#[allow(dead_code)] // Phase 5 接线后删除
+const MQ_PASS_BUF: usize = 129;
+/// 设备 ID 缓冲。它是 topic 的第一段（`<dev_id>/cmd`），
+/// 同时也是 `client_id` 的前缀，所以只允许 topic 安全的字符。
+#[allow(dead_code)] // Phase 5 接线后删除
+const DEV_ID_BUF: usize = 33;
 
 /// 命令时间窗允许范围（秒），对应 C 版 `cfg_set_cmd_ttl` 里的 `5..300`
 const CMD_TTL_MIN: u16 = 5;
@@ -151,7 +187,7 @@ impl PulseMs {
 
     /// 校验并构造。越界返回 [`ConfigError::OutOfRange`]。
     pub fn new(ms: u16) -> CfgResult<Self> {
-        if ms < PULSE_MS_MIN || ms > PULSE_MS_MAX {
+        if !(PULSE_MS_MIN..=PULSE_MS_MAX).contains(&ms) {
             return Err(ConfigError::OutOfRange {
                 field: "pulse.ms",
                 min: PULSE_MS_MIN as i32,
@@ -166,7 +202,8 @@ impl PulseMs {
     /// 但这里仍然走 `new` 走一遍校验 —— 万一有人把常量改出界，
     /// 会在 `expect` 上立刻炸掉，而不是悄悄写进 NVS。
     pub fn default_value() -> Self {
-        Self::new(PULSE_MS_DEFAULT).expect("PULSE_MS_DEFAULT 必须落在 PULSE_MS_MIN..=PULSE_MS_MAX 内")
+        Self::new(PULSE_MS_DEFAULT)
+            .expect("PULSE_MS_DEFAULT 必须落在 PULSE_MS_MIN..=PULSE_MS_MAX 内")
     }
 
     pub const fn get(self) -> u16 {
@@ -205,6 +242,10 @@ impl Cfg {
     }
 
     /// 便捷构造：自己取默认 NVS 分区。
+    ///
+    /// `main.rs` 走的是 [`Cfg::new`]（自己先 take 分区，便于和其它模块共享）。
+    /// 这个便捷入口留给测试和后续独立使用者。
+    #[allow(dead_code)] // 暂无调用者；main 显式走 new()
     pub fn take() -> CfgResult<Self> {
         let partition = EspDefaultNvsPartition::take()?;
         Self::new(partition)
@@ -296,12 +337,12 @@ impl Cfg {
                 return Ok(v as i8);
             }
         }
-        Ok(WIFI_TX_POWER_DBM as i8)
+        Ok(WIFI_TX_POWER_DBM)
     }
 
     /// 设置发射功率。范围 2..=20 dBm，超出驱动会拒，这里先挡一道。
     pub fn set_tx_power_dbm(&self, dbm: i8) -> CfgResult<()> {
-        if dbm < TX_DBM_MIN || dbm > TX_DBM_MAX {
+        if !(TX_DBM_MIN..=TX_DBM_MAX).contains(&dbm) {
             return Err(ConfigError::OutOfRange {
                 field: "wifi.tx_dbm",
                 min: TX_DBM_MIN as i32,
@@ -332,10 +373,7 @@ impl Cfg {
             Some(v) => PulseMs::new(v).unwrap_or_else(|_| {
                 warn!(
                     "NVS 里的 pulse_ms={} 越界（{}..={}），回落到默认值 {}",
-                    v,
-                    PULSE_MS_MIN,
-                    PULSE_MS_MAX,
-                    PULSE_MS_DEFAULT
+                    v, PULSE_MS_MIN, PULSE_MS_MAX, PULSE_MS_DEFAULT
                 );
                 PulseMs::default_value()
             }),
@@ -359,7 +397,7 @@ impl Cfg {
     }
 
     pub fn set_cmd_ttl(&self, s: u16) -> CfgResult<()> {
-        if s < CMD_TTL_MIN || s > CMD_TTL_MAX {
+        if !(CMD_TTL_MIN..=CMD_TTL_MAX).contains(&s) {
             return Err(ConfigError::OutOfRange {
                 field: "cmd.ttl",
                 min: CMD_TTL_MIN as i32,
@@ -382,7 +420,7 @@ impl Cfg {
     }
 
     pub fn set_status_period_s(&self, s: u16) -> CfgResult<()> {
-        if s < STATUS_S_MIN || s > STATUS_S_MAX {
+        if !(STATUS_S_MIN..=STATUS_S_MAX).contains(&s) {
             return Err(ConfigError::OutOfRange {
                 field: "status.period",
                 min: STATUS_S_MIN as i32,
@@ -405,7 +443,7 @@ impl Cfg {
     }
 
     pub fn set_keepalive_s(&self, s: u16) -> CfgResult<()> {
-        if s < KEEPALIVE_MIN || s > KEEPALIVE_MAX {
+        if !(KEEPALIVE_MIN..=KEEPALIVE_MAX).contains(&s) {
             return Err(ConfigError::OutOfRange {
                 field: "mqtt.keepalive",
                 min: KEEPALIVE_MIN as i32,
@@ -506,7 +544,7 @@ impl Cfg {
     }
 
     pub fn set_ddns_interval_s(&self, s: u32) -> CfgResult<()> {
-        if s < crate::consts::DDNS_INTERVAL_MIN_S || s > crate::consts::DDNS_INTERVAL_MAX_S {
+        if !(crate::consts::DDNS_INTERVAL_MIN_S..=crate::consts::DDNS_INTERVAL_MAX_S).contains(&s) {
             return Err(ConfigError::OutOfRange {
                 field: "ddns.interval",
                 min: crate::consts::DDNS_INTERVAL_MIN_S as i32,
@@ -532,6 +570,179 @@ impl Cfg {
         Ok(())
     }
 
+    // ---- MQTT ----
+    //
+    // 五个键都是 Rust 版新增，C 版没有。语义同 DDNS：读到 None 走默认值，
+    // 老设备刷了这版固件不会把已有配置读坏。
+
+    /// broker 主机名（不含 scheme / 端口）。空串 = 未配置，不会建连。
+    ///
+    /// 端口固定 8883、scheme 固定 mqtts —— 不放进 NVS，避免有人把
+    /// 端口改成 1883 静默降级成明文。
+    #[allow(dead_code)] // Phase 5 接线后删除
+    pub fn mqtt_host(&self) -> CfgResult<String> {
+        let nvs = self.lock();
+        let mut buf = [0u8; MQ_HOST_BUF];
+        Ok(nvs
+            .get_str(KEY_MQ_HOST, &mut buf)?
+            .unwrap_or("")
+            .to_string())
+    }
+
+    #[allow(dead_code)] // Phase 5 接线后删除
+    pub fn set_mqtt_host(&self, host: &str) -> CfgResult<()> {
+        if host.len() > MQ_HOST_BUF - 1 {
+            return Err(ConfigError::TooLong {
+                field: "mqtt.host",
+                max: MQ_HOST_BUF - 1,
+            });
+        }
+        if host.chars().any(|c| c.is_whitespace()) {
+            return Err(ConfigError::BadValue {
+                field: "mqtt.host",
+                reason: "含有空白字符（粘贴时带进来的换行/空格？）",
+            });
+        }
+        if host.starts_with("mqtt://") || host.starts_with("mqtts://") {
+            return Err(ConfigError::BadValue {
+                field: "mqtt.host",
+                reason: "只填主机名，不要带 scheme（本固件固定 mqtts:// 与 8883 端口）",
+            });
+        }
+        if host.contains(':') {
+            return Err(ConfigError::BadValue {
+                field: "mqtt.host",
+                reason: "只填主机名，不要带端口（本固件固定 8883）",
+            });
+        }
+        let nvs = self.lock();
+        nvs.set_str(KEY_MQ_HOST, host)?;
+        info!("MQTT broker 主机已保存: '{}'", host);
+        Ok(())
+    }
+
+    /// MQTT 用户名。空串 = 匿名（EMQX Serverless 下会被拒）。
+    #[allow(dead_code)] // Phase 5 接线后删除
+    pub fn mqtt_user(&self) -> CfgResult<String> {
+        let nvs = self.lock();
+        let mut buf = [0u8; MQ_USER_BUF];
+        Ok(nvs
+            .get_str(KEY_MQ_USER, &mut buf)?
+            .unwrap_or("")
+            .to_string())
+    }
+
+    #[allow(dead_code)] // Phase 5 接线后删除
+    pub fn set_mqtt_user(&self, user: &str) -> CfgResult<()> {
+        if user.len() > MQ_USER_BUF - 1 {
+            return Err(ConfigError::TooLong {
+                field: "mqtt.user",
+                max: MQ_USER_BUF - 1,
+            });
+        }
+        if user.chars().any(|c| c.is_whitespace()) {
+            return Err(ConfigError::BadValue {
+                field: "mqtt.user",
+                reason: "含有空白字符（粘贴时带进来的换行/空格？）",
+            });
+        }
+        let nvs = self.lock();
+        nvs.set_str(KEY_MQ_USER, user)?;
+        info!("MQTT 用户名已保存: '{}'", user);
+        Ok(())
+    }
+
+    /// MQTT 密码 —— **凭据**，与 [`ddns_token`](Self::ddns_token) 同一个规矩：
+    /// 只进 NVS、绝不进源码、日志一律走 [`mask_token`](crate::ddns::mask_token)。
+    #[allow(dead_code)] // Phase 5 接线后删除
+    pub fn mqtt_pass(&self) -> CfgResult<String> {
+        let nvs = self.lock();
+        let mut buf = [0u8; MQ_PASS_BUF];
+        Ok(nvs
+            .get_str(KEY_MQ_PASS, &mut buf)?
+            .unwrap_or("")
+            .to_string())
+    }
+
+    #[allow(dead_code)] // Phase 5 接线后删除
+    pub fn set_mqtt_pass(&self, pass: &str) -> CfgResult<()> {
+        if pass.len() > MQ_PASS_BUF - 1 {
+            return Err(ConfigError::TooLong {
+                field: "mqtt.pass",
+                max: MQ_PASS_BUF - 1,
+            });
+        }
+        // 与 ddns.token 同样的理由：空白字符基本都是粘贴带进来的，
+        // 会让服务端直接 401，现场看起来像「密码错了」。
+        if pass.chars().any(|c| c.is_whitespace()) {
+            return Err(ConfigError::BadValue {
+                field: "mqtt.pass",
+                reason: "含有空白字符（粘贴时带进来的换行/空格？）",
+            });
+        }
+        let nvs = self.lock();
+        nvs.set_str(KEY_MQ_PASS, pass)?;
+        // 只打掩码。**这一行是唯一允许出现密码的地方，且必须是掩码形式。**
+        info!("MQTT 密码已保存: {}", crate::ddns::mask_token(pass));
+        Ok(())
+    }
+
+    #[allow(dead_code)] // Phase 5 接线后删除
+    pub fn mqtt_enabled(&self) -> CfgResult<bool> {
+        let nvs = self.lock();
+        Ok(nvs.get_u8(KEY_MQ_EN)?.unwrap_or(0) != 0)
+    }
+
+    #[allow(dead_code)] // Phase 5 接线后删除
+    pub fn set_mqtt_enabled(&self, on: bool) -> CfgResult<()> {
+        let nvs = self.lock();
+        nvs.set_u8(KEY_MQ_EN, u8::from(on))?;
+        info!("MQTT 已{}", if on { "启用" } else { "停用" });
+        Ok(())
+    }
+
+    /// 设备 ID。默认 `pc01`（Q4 单设备假设），决定 topic 前缀与 client_id。
+    #[allow(dead_code)] // Phase 5 接线后删除
+    pub fn dev_id(&self) -> CfgResult<String> {
+        let nvs = self.lock();
+        let mut buf = [0u8; DEV_ID_BUF];
+        Ok(nvs
+            .get_str(KEY_DEV_ID, &mut buf)?
+            .unwrap_or(DEFAULT_DEV_ID)
+            .to_string())
+    }
+
+    #[allow(dead_code)] // Phase 5 接线后删除
+    pub fn set_dev_id(&self, id: &str) -> CfgResult<()> {
+        if id.len() > DEV_ID_BUF - 1 {
+            return Err(ConfigError::TooLong {
+                field: "dev.id",
+                max: DEV_ID_BUF - 1,
+            });
+        }
+        if id.is_empty() {
+            return Err(ConfigError::BadValue {
+                field: "dev.id",
+                reason: "不能为空",
+            });
+        }
+        // topic 用 '/' 分隔；MQTT 通配符 '+' 和 '#' 会破坏订阅语义。
+        // 这里收紧到字母/数字/下划线/短横线，避免把 topic 结构改坏。
+        if !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(ConfigError::BadValue {
+                field: "dev.id",
+                reason: "只允许 ASCII 字母、数字、下划线、短横线",
+            });
+        }
+        let nvs = self.lock();
+        nvs.set_str(KEY_DEV_ID, id)?;
+        info!("设备 ID 已保存: '{}'", id);
+        Ok(())
+    }
+
     // ---- 打印 / 复位 ----
 
     /// 打印当前配置。对应 C 版 `cfg_dump()`。
@@ -547,10 +758,21 @@ impl Cfg {
         let keepalive = self.keepalive_s()?;
 
         info!("当前配置（存于 NVS 命名空间 '{}'）:", CFG_NVS_NS);
-        info!("  wifi.ssid      = {}", if ssid.is_empty() { "(未设置)" } else { &ssid });
+        info!(
+            "  wifi.ssid      = {}",
+            if ssid.is_empty() {
+                "(未设置)"
+            } else {
+                &ssid
+            }
+        );
         info!(
             "  wifi.pass      = {}",
-            if pass.is_empty() { "(空 = 开放网络)" } else { "***（已设置）" }
+            if pass.is_empty() {
+                "(空 = 开放网络)"
+            } else {
+                "***（已设置）"
+            }
         );
         info!("  wifi.tx_dbm    = {} dBm", tx);
         info!(
@@ -573,7 +795,11 @@ impl Cfg {
         info!("  ddns.enabled   = {}", if ddns_en { "是" } else { "否" });
         info!(
             "  ddns.host      = {}",
-            if ddns_host.is_empty() { "(未设置)" } else { &ddns_host }
+            if ddns_host.is_empty() {
+                "(未设置)"
+            } else {
+                &ddns_host
+            }
         );
         info!(
             "  ddns.token     = {}",
@@ -583,9 +809,11 @@ impl Cfg {
                 format!("{}（已设置）", crate::ddns::mask_token(&ddns_tok))
             }
         );
-        info!("  ddns.interval  = {} s", self.ddns_interval_s().unwrap_or(
-            crate::consts::DDNS_INTERVAL_DEFAULT_S
-        ));
+        info!(
+            "  ddns.interval  = {} s",
+            self.ddns_interval_s()
+                .unwrap_or(crate::consts::DDNS_INTERVAL_DEFAULT_S)
+        );
         info!(
             "  ddns.last_ok   = {}",
             if ddns_iv == 0 {

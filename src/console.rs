@@ -85,6 +85,30 @@ pub trait ConsoleBackend: Send + Sync {
     /// 当前 MQTT keepalive，秒
     fn keepalive_s(&self) -> u16;
 
+    // ---- MQTT 只读查询 ----
+    //
+    // 与 DDNS 同一规矩：trait 上没有「读密码明文」的方法。
+    /// broker 主机名（不含 scheme / 端口），未配置返回空串
+    fn mqtt_host(&self) -> String;
+    /// MQTT 用户名，未配置返回空串
+    fn mqtt_user(&self) -> String;
+    /// MQTT 密码的掩码形式（未配置返回 "(未设置)"），**永不返回明文**
+    fn mqtt_pass_masked(&self) -> String;
+    /// MQTT 开关是否打开
+    fn mqtt_enabled(&self) -> bool;
+    /// MQTT 连接状态。`None` = 客户端未启动（未启用或建连失败）；
+    /// `Some(true)` = 已连上 broker；`Some(false)` = 已启动但当前断开（自动重连中）。
+    fn mqtt_online(&self) -> Option<bool>;
+    /// 请求 MQTT 线程立刻重发一次 retained 的 PC 状态。
+    ///
+    /// 与 [`Self::ddns_trigger_now`] 同一纪律：**只在队列里投一个请求**，
+    /// 绝不在 REPL 任务里做网络 I/O。返回 `false` 表示客户端未启动或队列已满。
+    fn mqtt_refresh_state(&self) -> bool;
+
+    // ---- 设备 ID ----
+    /// 设备 ID（决定 topic 前缀与 client_id）
+    fn dev_id(&self) -> String;
+
     // ---- DDNS 只读查询 ----
     //
     // 注意这里**没有**「读 token 明文」的方法。控制台永远只拿得到掩码，
@@ -116,6 +140,18 @@ pub trait ConsoleBackend: Send + Sync {
     fn set_cmd_ttl(&self, s: u16) -> Result<(), CmdError>;
     fn set_status_period_s(&self, s: u16) -> Result<(), CmdError>;
     fn set_keepalive_s(&self, s: u16) -> Result<(), CmdError>;
+
+    // ---- MQTT 写入 ----
+    //
+    // 与 DDNS 同一拆分：这里只落 NVS，不建连、不发网络。
+    // MQTT 客户端在 Phase 5 才存在，改完凭据需重启生效。
+    fn set_mqtt_host(&self, host: &str) -> Result<(), CmdError>;
+    fn set_mqtt_user(&self, user: &str) -> Result<(), CmdError>;
+    fn set_mqtt_pass(&self, pass: &str) -> Result<(), CmdError>;
+    fn set_mqtt_enabled(&self, en: bool) -> Result<(), CmdError>;
+    /// 设备 ID。改动会同时改变 topic 前缀与 client_id，需重启生效。
+    fn set_dev_id(&self, id: &str) -> Result<(), CmdError>;
+
     fn set_ddns_host(&self, host: &str) -> Result<(), CmdError>;
     fn set_ddns_token(&self, token: &str) -> Result<(), CmdError>;
     fn set_ddns_enabled(&self, en: bool) -> Result<(), CmdError>;
@@ -176,9 +212,7 @@ const TSK_NO_AFFINITY: i32 = 0x7FFF_FFFF;
 /// 泄漏是正确取舍：泄漏量是常量级（十几条命令的名称与帮助文本），
 /// 换来的是「绝不会有悬垂指针」这条硬保证。
 fn leak_cstr(s: &str) -> *const c_char {
-    CString::new(s)
-        .expect("控制台字面量不含 NUL")
-        .into_raw() as *const c_char
+    CString::new(s).expect("控制台字面量不含 NUL").into_raw() as *const c_char
 }
 
 /// 安全地取第 `i` 个参数。
@@ -329,7 +363,10 @@ unsafe extern "C" fn cmd_pulse(argc: c_int, argv: *mut *mut c_char) -> c_int {
         return 1;
     }
     if let Err(e) = b.set_pulse_ms(ms as u16) {
-        println!("超出范围或保存失败：允许 {}..{} ms", PULSE_MS_MIN, PULSE_MS_MAX);
+        println!(
+            "超出范围或保存失败：允许 {}..{} ms",
+            PULSE_MS_MIN, PULSE_MS_MAX
+        );
         let _ = e;
         return 1;
     }
@@ -445,12 +482,19 @@ unsafe extern "C" fn cmd_ddns(argc: c_int, argv: *mut *mut c_char) -> c_int {
 
     match sub {
         "show" => {
-            println!("ddns.enabled  = {}", if b.ddns_enabled() { "是" } else { "否" });
+            println!(
+                "ddns.enabled  = {}",
+                if b.ddns_enabled() { "是" } else { "否" }
+            );
 
             let host = b.ddns_host();
             println!(
                 "ddns.host     = {}",
-                if host.is_empty() { "(未设置)" } else { &host }
+                if host.is_empty() {
+                    "(未设置)"
+                } else {
+                    &host
+                }
             );
 
             // 只有掩码。trait 上根本没有「读明文」的方法，这是结构性保证。
@@ -460,7 +504,11 @@ unsafe extern "C" fn cmd_ddns(argc: c_int, argv: *mut *mut c_char) -> c_int {
             let last = b.ddns_last_ok();
             println!(
                 "ddns.last_ok  = {}",
-                if last == 0 { "(从未成功)".to_string() } else { last.to_string() }
+                if last == 0 {
+                    "(从未成功)".to_string()
+                } else {
+                    last.to_string()
+                }
             );
             0
         }
@@ -510,7 +558,8 @@ unsafe extern "C" fn cmd_ddns(argc: c_int, argv: *mut *mut c_char) -> c_int {
             let Some(raw) = (unsafe { arg(argc, argv, 2) }) else {
                 println!(
                     "用法: ddns interval <秒>   当前 {cur} s（范围 {}..{}）",
-                    crate::consts::DDNS_INTERVAL_MIN_S, crate::consts::DDNS_INTERVAL_MAX_S
+                    crate::consts::DDNS_INTERVAL_MIN_S,
+                    crate::consts::DDNS_INTERVAL_MAX_S
                 );
                 return 1;
             };
@@ -523,7 +572,8 @@ unsafe extern "C" fn cmd_ddns(argc: c_int, argv: *mut *mut c_char) -> c_int {
             {
                 println!(
                     "超出范围 {}..{}（当前 {cur} s）",
-                    crate::consts::DDNS_INTERVAL_MIN_S, crate::consts::DDNS_INTERVAL_MAX_S
+                    crate::consts::DDNS_INTERVAL_MIN_S,
+                    crate::consts::DDNS_INTERVAL_MAX_S
                 );
                 return 1;
             }
@@ -549,6 +599,174 @@ unsafe extern "C" fn cmd_ddns(argc: c_int, argv: *mut *mut c_char) -> c_int {
             1
         }
     }
+}
+
+/// `mq` 的用法串。缺子命令和子命令拼错时都打这一行。
+const MQ_USAGE: &str =
+    "用法: mq show | host <主机名> | user <用户名> | pass <密码> | enable | disable | refresh";
+
+/// `mq ...` —— 查看/修改 MQTT 凭据与开关
+///
+/// # 为什么这里绝不建连
+///
+/// 命令回调跑在 REPL 任务上，建 MQTT 客户端会阻塞到 TCP + TLS 握手完成，
+/// 最坏十几秒，串口命令通道会被整个卡死。这里只落 NVS；客户端（Phase 5）
+/// 在启动时读配置，所以改完要 `reboot` 才生效。
+///
+/// 端口与 scheme 不在此处可改：固定 `mqtts://` + 8883，避免被降级成明文。
+unsafe extern "C" fn cmd_mq(argc: c_int, argv: *mut *mut c_char) -> c_int {
+    let b = backend_or_fail!();
+
+    // SAFETY: argc/argv 由 IDF 提供。
+    let Some(sub) = (unsafe { arg(argc, argv, 1) }) else {
+        println!("{MQ_USAGE}");
+        return 1;
+    };
+
+    match sub {
+        "show" => {
+            println!(
+                "mq.enabled = {}",
+                if b.mqtt_enabled() { "是" } else { "否" }
+            );
+
+            let host = b.mqtt_host();
+            println!(
+                "mq.host    = {}",
+                if host.is_empty() {
+                    "(未设置)"
+                } else {
+                    &host
+                }
+            );
+            // scheme 与端口不可配，打出来是为了让「为什么填不了端口」一眼可见。
+            println!(
+                "mq.port    = {} (固定 mqtts，不可配)",
+                crate::consts::MQTT_PORT
+            );
+
+            let user = b.mqtt_user();
+            println!(
+                "mq.user    = {}",
+                if user.is_empty() {
+                    "(未设置)"
+                } else {
+                    &user
+                }
+            );
+
+            // 只有掩码。trait 上根本没有「读明文」的方法，这是结构性保证。
+            println!("mq.pass    = {}", b.mqtt_pass_masked());
+            println!("dev.id     = {}", b.dev_id());
+
+            // 连接状态是「运行时」而非「配置」，单独一行，让人一眼分清
+            // 「配了但连不上」和「没配」。
+            println!(
+                "mq.link    = {}",
+                match b.mqtt_online() {
+                    Some(true) => "已连接",
+                    Some(false) => "已启动，断开中（自动重连）",
+                    None => "客户端未启动（未启用或初始化失败）",
+                }
+            );
+            0
+        }
+
+        "host" => {
+            // SAFETY: 同上。
+            let Some(raw) = (unsafe { arg(argc, argv, 2) }) else {
+                println!("用法: mq host <主机名>    （只填主机名，端口固定 8883）");
+                return 1;
+            };
+            if let Err(e) = b.set_mqtt_host(raw) {
+                println!("保存失败: {}", err_text(&e));
+                return 1;
+            }
+            println!("MQTT 主机已设为 {raw}（重启后生效）");
+            0
+        }
+
+        "user" => {
+            // SAFETY: 同上。
+            let Some(raw) = (unsafe { arg(argc, argv, 2) }) else {
+                println!("用法: mq user <用户名>");
+                return 1;
+            };
+            if let Err(e) = b.set_mqtt_user(raw) {
+                println!("保存失败: {}", err_text(&e));
+                return 1;
+            }
+            println!("MQTT 用户名已设为 {raw}（重启后生效）");
+            0
+        }
+
+        "pass" => {
+            // SAFETY: 同上。
+            let Some(raw) = (unsafe { arg(argc, argv, 2) }) else {
+                println!("用法: mq pass <密码>");
+                return 1;
+            };
+            if let Err(e) = b.set_mqtt_pass(raw) {
+                println!("保存失败: {}", err_text(&e));
+                return 1;
+            }
+            // 只打掩码：入参 raw 出了这个分支就再也不会被打印。
+            println!(
+                "MQTT 密码已保存: {}（重启后生效）",
+                crate::ddns::mask_token(raw)
+            );
+            0
+        }
+
+        "enable" | "disable" => {
+            let on = sub == "enable";
+            if let Err(e) = b.set_mqtt_enabled(on) {
+                println!("保存失败: {}", err_text(&e));
+                return 1;
+            }
+            println!("MQTT 已{}（重启后生效）", if on { "启用" } else { "停用" });
+            0
+        }
+
+        // 只是往 mqtt 线程的队列里投一个请求，不等结果 —— 真正的 publish
+        // 发生在 mqtt 线程里（`state` 是 retained 的，重发一次让上位机立刻看到当前状态）。
+        "refresh" => {
+            if b.mqtt_refresh_state() {
+                println!("已请求重发 PC 状态");
+                0
+            } else {
+                println!("请求未投递：MQTT 客户端未启动或队列已满");
+                1
+            }
+        }
+
+        _ => {
+            println!("未知子命令: {sub}");
+            println!("{MQ_USAGE}");
+            1
+        }
+    }
+}
+
+/// `devid [新ID]` —— 查看/修改设备 ID
+///
+/// 设备 ID 决定 topic 前缀（`psw/<id>/...`）与 client_id 前缀，
+/// 改完需重启：已建连的客户端仍订阅着旧 topic。
+unsafe extern "C" fn cmd_devid(argc: c_int, argv: *mut *mut c_char) -> c_int {
+    let b = backend_or_fail!();
+
+    // SAFETY: argc/argv 由 IDF 提供。
+    let Some(raw) = (unsafe { arg(argc, argv, 1) }) else {
+        println!("dev.id = {}", b.dev_id());
+        println!("用法: devid <ASCII 字母数字下划线短横线>");
+        return 1;
+    };
+    if let Err(e) = b.set_dev_id(raw) {
+        println!("保存失败: {}", err_text(&e));
+        return 1;
+    }
+    println!("设备 ID 已设为 {raw}（重启后生效，topic 前缀随之改变）");
+    0
 }
 
 /// `reset` —— 清空 NVS，恢复编译期默认值
@@ -587,10 +805,7 @@ unsafe extern "C" fn cmd_press(argc: c_int, argv: *mut *mut c_char) -> c_int {
             return 1;
         };
         if ms < PULSE_MS_MIN as i32 || ms > PULSE_MS_MAX as i32 {
-            println!(
-                "宽度超出安全范围 {}..{} ms",
-                PULSE_MS_MIN, PULSE_MS_MAX
-            );
+            println!("宽度超出安全范围 {}..{} ms", PULSE_MS_MIN, PULSE_MS_MAX);
             return 1;
         }
         width = ms as u16;
@@ -622,9 +837,7 @@ unsafe extern "C" fn cmd_reboot(_argc: c_int, _argv: *mut *mut c_char) -> c_int 
 
     // SAFETY: esp_restart 是 IDF 的进程级重启原语，无参数、无前置条件，
     // 可以从任意任务调用。它不返回。
-    unsafe { sys::esp_restart() };
-    // 不会走到。
-    0
+    unsafe { sys::esp_restart() }
 }
 
 fn err_text(e: &CmdError) -> String {
@@ -651,18 +864,78 @@ struct CmdDef {
 /// 注意：C 版头注释里提到的 `save` **不是一个命令** —— 它只是提示
 /// 「各命令已自带保存」。所以这里没有 `save`，以免凭空多出一条命令。
 static COMMANDS: &[CmdDef] = &[
-    CmdDef { name: "cfg",       help: "打印当前配置",                      func: cmd_cfg },
-    CmdDef { name: "wifi",      help: "改 Wi-Fi: wifi <ssid> [pass]",      func: cmd_wifi },
-    CmdDef { name: "txpower",   help: "改发射功率: txpower <dBm>",         func: cmd_txpower },
-    CmdDef { name: "pulse",     help: "改脉冲宽度: pulse <ms>",            func: cmd_pulse },
-    CmdDef { name: "ttl",       help: "改指令时间窗: ttl <秒>",            func: cmd_ttl },
-    CmdDef { name: "status",    help: "改状态上报周期: status <秒>",        func: cmd_status },
-    CmdDef { name: "keepalive", help: "改 MQTT keepalive: keepalive <秒>", func: cmd_keepalive },
-    CmdDef { name: "ddns",      help: "DDNS: ddns show|host|token|enable|disable|interval|now", func: cmd_ddns },
-    CmdDef { name: "scan",      help: "立刻扫描一次 Wi-Fi",                func: cmd_scan },
-    CmdDef { name: "press",     help: "手动触发一次电源键脉冲",            func: cmd_press },
-    CmdDef { name: "reset",     help: "清空 NVS 恢复默认配置",             func: cmd_reset },
-    CmdDef { name: "reboot",    help: "软重启",                            func: cmd_reboot },
+    CmdDef {
+        name: "cfg",
+        help: "打印当前配置",
+        func: cmd_cfg,
+    },
+    CmdDef {
+        name: "wifi",
+        help: "改 Wi-Fi: wifi <ssid> [pass]",
+        func: cmd_wifi,
+    },
+    CmdDef {
+        name: "txpower",
+        help: "改发射功率: txpower <dBm>",
+        func: cmd_txpower,
+    },
+    CmdDef {
+        name: "pulse",
+        help: "改脉冲宽度: pulse <ms>",
+        func: cmd_pulse,
+    },
+    CmdDef {
+        name: "ttl",
+        help: "改指令时间窗: ttl <秒>",
+        func: cmd_ttl,
+    },
+    CmdDef {
+        name: "status",
+        help: "改状态上报周期: status <秒>",
+        func: cmd_status,
+    },
+    CmdDef {
+        name: "keepalive",
+        help: "改 MQTT keepalive: keepalive <秒>",
+        func: cmd_keepalive,
+    },
+    CmdDef {
+        name: "ddns",
+        help: "DDNS: ddns show|host|token|enable|disable|interval|now",
+        func: cmd_ddns,
+    },
+    // 以下两条是 Rust 版新增（C 版没有 MQTT）。放在 `ddns` 之后，
+    // 让配置类命令聚在一起；C 版顺序比对只覆盖它原有的那 12 条。
+    CmdDef {
+        name: "mq",
+        help: "MQTT: mq show|host|user|pass|enable|disable|refresh",
+        func: cmd_mq,
+    },
+    CmdDef {
+        name: "devid",
+        help: "设备 ID: devid [新ID]（决定 topic 前缀）",
+        func: cmd_devid,
+    },
+    CmdDef {
+        name: "scan",
+        help: "立刻扫描一次 Wi-Fi",
+        func: cmd_scan,
+    },
+    CmdDef {
+        name: "press",
+        help: "手动触发一次电源键脉冲",
+        func: cmd_press,
+    },
+    CmdDef {
+        name: "reset",
+        help: "清空 NVS 恢复默认配置",
+        func: cmd_reset,
+    },
+    CmdDef {
+        name: "reboot",
+        help: "软重启",
+        func: cmd_reboot,
+    },
 ];
 
 /// 注册所有命令 + help。
@@ -761,14 +1034,16 @@ pub fn init(backend: &'static dyn ConsoleBackend) -> Result<(), EspError> {
     // 读它；&mut repl 是合法的出参。
     let err = unsafe { sys::esp_console_new_repl_stdio(repl_cfg, &mut repl) };
     if err != sys::ESP_OK || repl.is_null() {
-        error!(
-            "控制台初始化失败: {err}（串口配置命令将不可用，其余功能不受影响）"
-        );
+        error!("控制台初始化失败: {err}（串口配置命令将不可用，其余功能不受影响）");
         // ⚠️ 这里的 err 可能是 ESP_OK 而 repl 仍是空指针（走了 `||` 的右半边）。
         // 此时 `EspError::from(0)` 返回 None，直接 .expect() 会 panic ——
         // 而本函数的契约是「控制台起不来也不许拖垮固件」。所以用 ESP_FAIL 兜底，
         // 保证这条路径永远返回 Err 而不是 panic。
-        let code = if err != sys::ESP_OK { err } else { sys::ESP_FAIL };
+        let code = if err != sys::ESP_OK {
+            err
+        } else {
+            sys::ESP_FAIL
+        };
         return Err(EspError::from(code).expect("code 已保证非 0"));
     }
 
@@ -792,6 +1067,7 @@ pub fn init(backend: &'static dyn ConsoleBackend) -> Result<(), EspError> {
 
 /// REPL 是否已经成功启动过。
 /// 给 `main.rs` 做断言/日志用，也方便测试。
+#[allow(dead_code)]
 pub fn is_running() -> bool {
     REPL.get().is_some()
 }

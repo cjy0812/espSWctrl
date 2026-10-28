@@ -4,10 +4,12 @@
 //! 串口控制台（`console.rs`）与 Wi-Fi/时间同步（`wifi.rs`）。
 //!
 //! 三条安全线（重写过程中一条都不能丢）：
-//!   1. 上电安全态 = 第一件事把 GPIO5 拉低；
-//!   2. 脉冲在独立线程生成，绝不在 MQTT 回调里拉 GPIO；
-//!   3. 固件侧对 topic 做防御性字节比对。
-//!   （本阶段覆盖 1 和 2；3 在 Phase 4。）
+//!
+//! 1. 上电安全态 = 第一件事把 GPIO5 拉低；
+//! 2. 脉冲在独立线程生成，绝不在 MQTT 回调里拉 GPIO；
+//! 3. 固件侧对 topic 做防御性字节比对。
+//!
+//! 本阶段覆盖 1 和 2；3 在 Phase 4。
 //!
 //! # 启动顺序为什么是这个顺序
 //!
@@ -25,16 +27,30 @@
 //!
 //! `pulse::init` 必须排在 `Cfg` / `Wifi` **之前** —— 安全态优先于一切。
 
+// ---- lint 策略 ----
+//
+// 这里只放「现在就能满足、且真的能防住事故」的项。不放 `#![deny(warnings)]`：
+// MQTT 接线（Phase 5）前有 36 处 MQTT 预留代码是传递性死代码，已逐点标注
+// `allow(dead_code)`；全局 deny warnings 等 Phase 5 收尾后再开。
+#![deny(unsafe_op_in_unsafe_fn)]
+
+// 不启用 `unreachable_pub`：本 crate 是纯二进制，模块内的 `pub` 全部对外不可达，
+// 开了会立刻产出 164 条无意义告警，把真正的问题淹掉。它只对 lib crate 有意义。
+//
+// 也不启用 `#![deny(warnings)]`：等 Phase 5 MQTT 接线收尾、预留代码的
+// `allow(dead_code)` 全部撤掉之后，再在 CI 里开 `clippy -- -Dwarnings`。
+
 mod cfg;
 mod cmd_verify;
-mod consts;
 mod console;
+mod consts;
 mod ddns;
+mod mqtt;
 mod pc_state;
 mod pulse;
 mod wifi;
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -78,11 +94,30 @@ struct Backend {
     /// 所以拆成两把锁：对时线程只在开头短暂拿 `wifi` 查一次连接状态，
     /// 之后在 `time_sync` 锁内做网络 I/O，两把锁互不相干。
     time_sync: Mutex<TimeSync>,
+    /// MQTT 句柄。`None` 表示没配主机名或 client 创建失败。
+    ///
+    /// 与 C 版 `main.c:606` 一致：MQTT 起不来只记日志，不影响脉冲、
+    /// 控制台和 DDNS —— 这台设备的核心职责是「按电源键」，网络是附加能力。
+    mqtt: Option<crate::mqtt::MqttHandle>,
 }
 
 /// 把任意 `Display` 错误折成控制台能打印的 `CmdError::Other`。
 fn other<E: std::fmt::Display>(e: E) -> CmdError {
     CmdError::Other(e.to_string())
+}
+
+/// 读 PC 开关机状态。`PcState` 持有 GPIO 驱动（非 `Sync`），所以要走锁。
+///
+/// 锁只覆盖一次 `is_low()` 读寄存器，极短；中毒时按「关机」处理并记日志 ——
+/// 心跳只是观测用途，不值得因为一次读失败让主循环 panic。
+fn pc_is_on(state: &Mutex<pc_state::PcState<'static>>) -> bool {
+    match state.lock() {
+        Ok(g) => g.is_on(),
+        Err(e) => {
+            log::error!("PC 状态互斥锁中毒: {e}");
+            false
+        }
+    }
 }
 
 /// 「下一轮主循环立刻跑一次 DDNS」的请求标志。
@@ -135,7 +170,7 @@ const DDNS_STOP_RETRY_S: u64 = 3600;
 ///
 /// 失败**只 warn 不 panic**：对时失败的直接后果是 DDNS 的 TLS 校验证书
 /// 有效期会失败，但心跳、脉冲、控制台都还能用，不该整机重启。
-fn time_sync_loop(backend: &'static Backend) {
+fn time_sync_loop(backend: &'static Backend, time_synced: Arc<AtomicBool>) {
     loop {
         // ---- 短暂持 Wi-Fi 锁：只问「连上了吗」 ----
         let connected = match backend.wifi.lock() {
@@ -163,6 +198,10 @@ fn time_sync_loop(backend: &'static Backend) {
 
         match time_sync.sync() {
             Ok(()) => {
+                // 必须放在 `return` 之前（线程到此结束，之后再无机会写）；
+                // 也必须放在 `log::info!` 之前（日志可能被级别过滤掉）。
+                // 只置 true，永不置回 false —— 否则设备会突然开始拒命令。
+                time_synced.store(true, Ordering::SeqCst);
                 log::info!("SNTP 对时完成，当前时间戳 {}", unix_now());
                 return;
             }
@@ -213,7 +252,11 @@ fn ddns_tick(cfg: &Cfg, next_due: &mut Instant) {
         log::info!("DDNS 未配置记录名，仍按 token 绑定的记录推送（host 仅用于日志）");
     }
     // 只影响日志文案：hostname 仅用于 `DDNS 已更新：{}`，请求里不会发送。
-    let host_label = if host.is_empty() { "(未命名)".to_string() } else { host };
+    let host_label = if host.is_empty() {
+        "(未命名)".to_string()
+    } else {
+        host
+    };
 
     // 时钟没对上时 TLS 必然因证书有效期失败，没必要发一次注定失败的请求。
     if unix_now() == 0 {
@@ -225,7 +268,9 @@ fn ddns_tick(cfg: &Cfg, next_due: &mut Instant) {
         return;
     }
 
-    let interval_s = cfg.ddns_interval_s().unwrap_or(consts::DDNS_INTERVAL_DEFAULT_S) as u64;
+    let interval_s = cfg
+        .ddns_interval_s()
+        .unwrap_or(consts::DDNS_INTERVAL_DEFAULT_S) as u64;
 
     // 每轮重建 client：provider 持有 token 的副本，短生命周期能少一份常驻内存。
     let client = ddns::DdnsClient::new(ddns::DnsheProvider::new(token, host_label), interval_s);
@@ -303,6 +348,50 @@ impl ConsoleBackend for Backend {
             .unwrap_or(consts::MQTT_KEEPALIVE_S as u16)
     }
 
+    // ---- MQTT 只读查询 ----
+    //
+    // 同 DDNS：NVS 读失败一律退回「未配置」，让 `mq show` 仍能打出其余字段。
+
+    fn mqtt_host(&self) -> String {
+        self.cfg.mqtt_host().unwrap_or_default()
+    }
+
+    fn mqtt_user(&self) -> String {
+        self.cfg.mqtt_user().unwrap_or_default()
+    }
+
+    fn mqtt_pass_masked(&self) -> String {
+        // **只打掩码，绝不进日志**：明文在这里被 mask_token 截断，
+        // 本函数是控制台能拿到密码的唯一通路，返回值已不含完整凭据。
+        let pass = self.cfg.mqtt_pass().unwrap_or_default();
+        if pass.is_empty() {
+            "(未设置)".to_string()
+        } else {
+            crate::ddns::mask_token(&pass)
+        }
+    }
+
+    fn mqtt_enabled(&self) -> bool {
+        self.cfg.mqtt_enabled().unwrap_or(false)
+    }
+
+    fn mqtt_online(&self) -> Option<bool> {
+        // 句柄不存在 = 客户端根本没起（未启用 / 建连失败），这与
+        // 「起了但当前断开」是两种不同的排障方向，必须区分开。
+        self.mqtt.as_ref().map(|h| h.is_online())
+    }
+
+    fn mqtt_refresh_state(&self) -> bool {
+        self.mqtt.as_ref().is_some_and(|h| h.request_state())
+    }
+
+    fn dev_id(&self) -> String {
+        // 读失败退回编译期默认值，而不是空串 —— 空串会拼出 `psw//cmd` 这种坏 topic。
+        self.cfg
+            .dev_id()
+            .unwrap_or_else(|_| consts::DEFAULT_DEV_ID.to_string())
+    }
+
     // ---- DDNS 只读查询 ----
     //
     // 读取失败一律退回「未配置」而不是报错：控制台 `ddns show` 的价值是
@@ -369,6 +458,32 @@ impl ConsoleBackend for Backend {
 
     fn set_keepalive_s(&self, s: u16) -> Result<(), CmdError> {
         self.cfg.set_keepalive_s(s).map_err(other)
+    }
+
+    // ---- MQTT 写入 ----
+    //
+    // 只落 NVS。MQTT 客户端尚不存在（Phase 5），所以没有任何「生效」信号：
+    // 建连时才会重新读这些键，改完必须 reboot。
+
+    fn set_mqtt_host(&self, host: &str) -> Result<(), CmdError> {
+        self.cfg.set_mqtt_host(host).map_err(other)
+    }
+
+    fn set_mqtt_user(&self, user: &str) -> Result<(), CmdError> {
+        self.cfg.set_mqtt_user(user).map_err(other)
+    }
+
+    fn set_mqtt_pass(&self, pass: &str) -> Result<(), CmdError> {
+        // **不打印任何东西**：掩码由 console 侧统一打，这里多打一次就多一个泄漏点。
+        self.cfg.set_mqtt_pass(pass).map_err(other)
+    }
+
+    fn set_mqtt_enabled(&self, en: bool) -> Result<(), CmdError> {
+        self.cfg.set_mqtt_enabled(en).map_err(other)
+    }
+
+    fn set_dev_id(&self, id: &str) -> Result<(), CmdError> {
+        self.cfg.set_dev_id(id).map_err(other)
     }
 
     // ---- DDNS 写入 ----
@@ -491,7 +606,11 @@ fn main() {
     let modem = peripherals.modem;
 
     let pulse = pulse::init(pins.gpio5).expect("pulse 初始化失败");
-    let pc_state = pc_state::init(pins.gpio6).expect("pc_state 初始化失败");
+    // 包成 `Arc<Mutex<>>`：MQTT 线程与主循环都要读它，而 `PcState`
+    // 内部持有 GPIO 驱动（非 Sync）。锁内只做一次 `is_low()`，极短。
+    let pc_state = Arc::new(Mutex::new(
+        pc_state::init(pins.gpio6).expect("pc_state 初始化失败"),
+    ));
 
     // ---- 事件循环 / NVS ----
     let sysloop = EspSystemEventLoop::take().expect("事件循环初始化失败");
@@ -511,6 +630,33 @@ fn main() {
     // `&WifiManager` 了（那样又得去抢锁，等于没解决）。
     let net_up = wifi.net_up_watch();
 
+    // SNTP 成功 -> true，只写一次；MQTT 线程将来轮询读（docs/mqtt-port.md §6.2）。
+    // 刻意**不**放进 `Backend`：`time_sync_loop` 拿的是 `&'static Backend`，
+    // 从那里读标志等于让 SNTP 线程依赖自己的输出。
+    let time_synced: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+
+    // ---- MQTT ----
+    // 必须在 `Box::leak` 之前起：`Backend` 是 `&'static`，泄漏后就不能再赋值。
+    // 失败不致命（C 版 `main.c:606` 语义）：这台设备的核心职责是「按电源键」，
+    // 网络是附加能力，MQTT 起不来不影响脉冲、控制台和 DDNS。
+    let mqtt = if cfg.mqtt_enabled().unwrap_or(false) {
+        match mqtt::spawn(
+            Arc::clone(&cfg),
+            pulse.clone(),
+            Arc::clone(&pc_state),
+            Arc::clone(&time_synced),
+        ) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                log::error!("MQTT 启动失败: {e}（其余功能不受影响）");
+                None
+            }
+        }
+    } else {
+        log::info!("MQTT 未启用 —— 敲 `mq enable on` 后重启生效");
+        None
+    };
+
     // 后端必须活到进程结束，所以 Box::leak 成 'static。
     let backend: &'static Backend = Box::leak(Box::new(Backend {
         cfg: Arc::clone(&cfg),
@@ -519,6 +665,7 @@ fn main() {
         net_up,
         // SNTP 实例单独一把锁：对时期间只锁这里，Wi-Fi 锁保持可抢。
         time_sync: Mutex::new(TimeSync::new()),
+        mqtt,
     }));
 
     // 控制台起不来不致命（C 版语义）：只打日志，其余功能照跑。
@@ -540,12 +687,16 @@ fn main() {
     std::thread::Builder::new()
         .name("sntp".into())
         .stack_size(TIME_SYNC_STACK)
-        .spawn(move || time_sync_loop(backend))
+        .spawn(move || time_sync_loop(backend, time_synced))
         .expect("SNTP 线程创建失败");
 
     log::info!(
         "Phase 2 就绪：安全态已建立，PC 当前状态 = {}",
-        if pc_state.is_on() { "开机" } else { "关机" }
+        if pc_is_on(&pc_state) {
+            "开机"
+        } else {
+            "关机"
+        }
     );
 
     // ---- 主循环 ----
@@ -582,7 +733,11 @@ fn main() {
 
         log::info!(
             "心跳：PC = {}，pulse busy = {}，Wi-Fi = {}",
-            if pc_state.is_on() { "开机" } else { "关机" },
+            if pc_is_on(&pc_state) {
+                "开机"
+            } else {
+                "关机"
+            },
             backend.pulse.is_busy(),
             if connected { "已连接" } else { "未连接" }
         );
