@@ -2,5 +2,7 @@
 # 钉死版本，不用浮动的 nightly —— 上游 nightly 偶尔会把 esp target 编挂。
 # Phase 0 探针实际编过并量出 1.128MB 的那一版，已验证可用。
 channel = "nightly-2026-09-20"
-components = ["rust-src"]
+# rustfmt / clippy 必须显式声明：target 是 riscv32，本机也没有额外的宿主工具链，
+# 不写进来就调不出 `cargo fmt` / `cargo clippy`（esp-idf-svc 自己的 CI 也是这么配的）。
+components = ["rust-src", "rustfmt", "clippy"]
 profile = "minimal"

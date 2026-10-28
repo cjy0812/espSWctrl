@@ -8,11 +8,10 @@ resolver = "2"
 publish = false
 
 # 显式声明自己是 workspace root。
-# 没有这一段，嵌在里面的 rust-probe/ 会被 cargo 当成「本仓库的另一个成员」，
-# 两边互相认为对方是 workspace 而报错。exclude 把它隔离出去。
+# `CARGO_WORKSPACE_DIR`（.cargo/config.toml）依赖它定位仓库根，
+# 去掉这段 embuild 会算错 workspace 根，静默无视 sdkconfig.defaults。
 [workspace]
 members = ["."]
-exclude = ["rust-probe"]
 
 [dependencies]
 esp-idf-svc = "0.53"

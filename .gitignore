@@ -33,7 +33,11 @@ sdkconfig.old
 sdkconfig
 
 # Secrets — 绝不进 Git
-main/secrets.h
+# C 版用 secrets.h 存凭据，已随 main/ 删除；Rust 版凭据只进 NVS。
+# 规则保留，防止以后有人再建同名文件。
+secrets.h
+*.pem
+*.key
 
 # ESP-IDF dependencies
 # For older versions or manual component management

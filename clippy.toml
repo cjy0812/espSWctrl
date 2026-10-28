@@ -1,0 +1,13 @@
+# clippy 配置 —— 只放确定要执行的策略，不堆砌。
+# 注意：本项目 target 是 riscv32imc-esp-espidf，clippy 要通过 cargo-build.cmd 的环境才能跑：
+#   cargo-build.cmd clippy -- -Dwarnings
+# 直接在本机 shell 跑 `cargo clippy` 会因为 MSYSTEM 和 PATH 问题失败。
+
+# 允许的标识符最小长度（默认 3 会让 `id`、`ok` 之类到处报警）
+# 这里保持默认，不覆盖。
+
+# 禁止使用会在 ESP32 上出问题的 API
+disallowed-methods = [
+    # 标准库的线程池在 no_std 边缘环境不可控，且本项目的线程都是显式 spawn
+    { path = "std::thread::spawn", reason = "ESP32 上线程资源紧张，必须显式控制栈大小；用 std::thread::Builder::new().stack_size()" },
+]

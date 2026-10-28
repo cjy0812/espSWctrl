@@ -1,0 +1,10 @@
+# rustfmt 配置 —— 与 esp-idf-svc 上游保持一致，避免格式化时产生无关 diff。
+# 改这里之前先确认 `cargo fmt --check` 仍然通过。
+
+edition = "2021"
+# 上游 esp-rs 系列统一 100 列，比默认 100 一致但显式声明，防止默认值变化。
+max_width = 100
+# 不允许 rustfmt 重排 import 分组 —— 本仓库的 import 分组带语义（std / esp-idf / crate）。
+reorder_imports = true
+# 保留手动换行，不强行合并。
+use_small_heuristics = "Default"

@@ -23,7 +23,8 @@
     "board/esp32c3-builtin.cfg"
   ],
   "idf.port": "detect",
-  "idf.currentSetup": "G:\\Dev\\ESP\\v5.5.5\\esp-idf",
+  // 不写 "idf.currentSetup"：绝对路径反复搬迁，写死会静默指向错误工具链。
+  // 需要时由 ESP-IDF 扩展自行探测，或用 IDF_PATH 环境变量。
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32c3"
   }

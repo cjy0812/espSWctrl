@@ -23,10 +23,10 @@ build-std = ["std", "panic_abort"]
 #
 # embuild::cargo::workspace_dir()（embuild-0.33.2/src/cargo.rs:432）在
 # CARGO_WORKSPACE_DIR 未设置时，靠从 OUT_DIR 往上 pop 6 层来猜 workspace 根。
-# 我们为绕开 esp-idf-sys 的 Windows 路径长度限制，把 target 搬到了 N:/p，
-# 于是 pop 6 层算出来是 N:/p —— 而不是 G:\GitHub\espSWctrl。
+# 我们为绕开 esp-idf-sys 的 Windows 路径长度限制，把 target 搬到了 G:/tmp/p，
+# 于是 pop 6 层算出来是 G:/tmp/p —— 而不是 G:\GitHub\espSWctrl。
 #
-# 后果（实测，2026-10-17）：esp-idf-sys 去 N:/p 找 sdkconfig / sdkconfig.defaults，
+# 后果（实测，2026-10-17）：esp-idf-sys 去 G:/tmp/p 找 sdkconfig / sdkconfig.defaults，
 # 找不到就退回 IDF 纯默认值，仓库里两份配置全部被无视：
 #   * 分区表回落成 partitions_singleapp.csv —— app 分区只有 1MB 而不是 1500K
 #   * 主控制台回落成 UART0，板子的 USB-Serial-JTAG 降级为「副控制台」，

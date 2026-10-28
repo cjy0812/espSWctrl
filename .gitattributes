@@ -1,0 +1,22 @@
+# 行尾策略：显式声明，不依赖各机器的 core.autocrlf。
+# 背景：本仓库在 Windows 上开发，core.autocrlf=true 时索引存 LF、检出转 CRLF。
+# 但 .cmd 脚本在非 Windows 环境检出会拿到 LF，cmd 的 goto/标签解析会出错。
+# 所以对 .cmd 强制 eol=crlf，让 git 在索引里也存 CRLF。
+
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF（cmd 的 goto / 标签解析对裸 LF 敏感）
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制/不应转换的
+*.bin binary
+*.elf binary
+*.a binary
+*.o binary
+*.png binary
+*.jpg binary
+
+# 这些不需要 diff 噪音
+Cargo.lock -diff
+dependencies.lock -diff
