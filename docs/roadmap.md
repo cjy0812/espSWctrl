@@ -113,9 +113,13 @@
 
 ## Phase 5 —— MQTT 运行时（mqtt-port.md 阶段 1–3）
 
-> **验收口径**：以下 `[x]` 均为「代码审查 + `cargo-build.cmd check` 通过」，
-> **尚未在真机上连 broker 验证**。端到端验收需 `mq enable` + `mq host` 配好凭据后
-> 上电观察串口日志。
+> **验收口径**：以下 `[x]` 均为「代码审查 + `cargo-build.cmd check` 通过」。
+>
+> **2026-10-28 真机验证**：release 构建 → esptool 烧录 COM3 → 启动成功。
+> 已确认：串口控制台 REPL、`mq show` 全字段回显、`devid` 默认 `pc01`、
+> Wi-Fi 连上 LEDE（WPA3-SAE）、IP 192.168.2.102、SNTP 同步成功、PC 状态回读（开机）、
+> 5 秒心跳稳定。**MQTT 连接 broker 仍未验证** —— 凭据未配置，`mq.link = 客户端未启动`。
+> 端到端验收需 `mq enable` + `mq host` 配好凭据后观察串口 TLS 握手与订阅日志。
 
 - [x] client_id / 端口 / keepalive 等常量就位（consts.rs:48-71）
 - [x] MQTT 凭据 NVS 读写 API —— 五个 getter/setter（cfg.rs:565-744），由 `mq` / `devid` 控制台命令写入（console.rs:609-720），由 `mqtt::spawn` 运行时读取（mqtt.rs:164-179）（2026-10-28 完成）

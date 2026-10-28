@@ -45,6 +45,8 @@ secrets.h
 **/components/.idf/
 # For modern ESP-IDF component manager
 managed_components/
+# esp-idf-sys 每次构建都会重新生成的旧式组件锁（dependencies.lock 才是入库的那份）
+components_esp32c3.lock
 # If ESP-IDF tools are installed/referenced locally to the project
 .espressif/
 

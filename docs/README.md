@@ -6,6 +6,7 @@
 |---|---|---|---|
 | [`../AGENTS.md`](../AGENTS.md) | **跨工具通用规则**：如何在这个仓库工作 —— 构建入口、本机踩坑、安全线、NVS 纪律 | 进度台账、阶段编号 | 所有 coding agent（Claude Code / Codex / Cursor / Copilot） |
 | [`../CLAUDE.md`](../CLAUDE.md) | Claude Code 入口：`@AGENTS.md` + 调度规则与验收纪律 | 构建踩坑（已在 AGENTS.md，不重复） | Claude Code |
+| [`usage.md`](usage.md) | **使用手册**：控制台命令、MQTT topic 与 payload、典型操作、排障、配置项默认值 | 设计论证、硬件接线 | 要用这台设备的人（包括三个月后的自己） |
 | [`roadmap.md`](roadmap.md) | **唯一**的进度台账与阶段编号来源 | 设计论证 | 想知道「现在做到哪、下一步做什么」的人 |
 | [`architecture.md`](architecture.md) | 软件设计与安全论证：总体架构、TLS 方案、Topic/鉴权/防重放、失联与故障处理 | 阶段划分（指向 roadmap）、硬件接线 | 想理解「为什么这样设计」的人 |
 | [`hardware.md`](hardware.md) | 硬件依据：817D 光耦电路、电阻计算、引脚选择、接线步骤、供电接地 | 软件设计 | 动手接线的人 |
@@ -14,10 +15,11 @@
 
 ## 阅读顺序建议
 
-- **第一次接触本项目**：`../AGENTS.md` → `architecture.md` §1 → `roadmap.md`
+- **第一次接触本项目**：`../README.md` → `usage.md` §0 → `hardware.md`
+- **要用这台设备**：`usage.md` 全文（配凭据、发指令、排障都在这里）
 - **要动手改代码**：`../AGENTS.md`（尤其安全线）→ `roadmap.md` 当前焦点 → 对应模块的 `architecture.md` 章节
 - **要接线硬件**：`hardware.md` 全文，按 §5.10 的顺序做，不要跳步
-- **要做 MQTT**：`mqtt-port.md` 全文 → `roadmap.md` Phase 5
+- **要改 MQTT 实现**：`mqtt-port.md` 全文 → `roadmap.md` Phase 5
 
 ## 生命周期
 
