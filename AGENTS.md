@@ -53,11 +53,11 @@ foreach($n in 'IDF_PATH','IDF_TOOLS_PATH','IDF_PYTHON_ENV_PATH'){ "$n = [$([Envi
 
 **目标**：核心代码与构建逻辑保持 OS 中立。分三档，别混为一谈：
 
-| 档 | 内容 | 状态 |
-|---|---|---|
-| **L0 路径中立** | 禁止写死绝对路径，一律从环境变量推导 | ✅ 已达成，**有可执行门禁** |
+| 档                | 内容                                     | 状态                       |
+| ----------------- | ---------------------------------------- | -------------------------- |
+| **L0 路径中立**   | 禁止写死绝对路径，一律从环境变量推导     | ✅ 已达成，**有可执行门禁** |
 | **L1 脚本薄封装** | 平台专用脚本只做环境准备，不承载构建逻辑 | ✅ 已达成，**有可执行门禁** |
-| **L2 跨 OS 构建** | 任何 OS 都能 build | ❌ **不支持**，见下 |
+| **L2 跨 OS 构建** | 任何 OS 都能 build                       | ❌ **不支持**，见下         |
 
 **L0 / L1 由 `scripts/check-portability.py` 强制**（纯标准库 Python，Windows 与 WSL 双侧实测通过）：
 
@@ -90,10 +90,10 @@ python scripts\check-portability.py --verbose # 打印白名单命中
 
 ### 网络：两处必须的绕行
 
-| 问题 | 解法 |
-|---|---|
-| cargo 经代理下载 crate，schannel 吊销检查离线失败、多路复用被掐 | `CARGO_HTTP_CHECK_REVOKE=false` / `MULTIPLEXING=false` / `TIMEOUT=180` / `LOW_SPEED_LIMIT=1` |
-| component manager 经代理访问两个 espressif 域名 TLS 失败（直连正常、证书是真 DigiCert） | 精准 `NO_PROXY` 两个完整主机名，**保留证书校验** |
+| 问题                                                                                    | 解法                                                                                         |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| cargo 经代理下载 crate，schannel 吊销检查离线失败、多路复用被掐                         | `CARGO_HTTP_CHECK_REVOKE=false` / `MULTIPLEXING=false` / `TIMEOUT=180` / `LOW_SPEED_LIMIT=1` |
+| component manager 经代理访问两个 espressif 域名 TLS 失败（直连正常、证书是真 DigiCert） | 精准 `NO_PROXY` 两个完整主机名，**保留证书校验**                                             |
 
 `NO_PROXY` 必须写完整主机名：`espressif.com` / `.espressif.com` 都覆盖不到带连字符的 `components-file.espressif.com`（实测超时）。
 
@@ -117,11 +117,11 @@ python scripts\check-portability.py --verbose # 打印白名单命中
 
 ### 线程模型
 
-| 线程 | 职责 |
-|---|---|
-| `main` | 5 秒心跳、DDNS tick、发起所有 HTTPS 请求 |
-| `pulse` | 独占线程，唯一允许拉 GPIO5 的地方 |
-| `sntp` | 一次性对时（`sync()` 最长阻塞 60 秒，不能放进 5 秒主循环） |
+| 线程    | 职责                                                       |
+| ------- | ---------------------------------------------------------- |
+| `main`  | 5 秒心跳、DDNS tick、发起所有 HTTPS 请求                   |
+| `pulse` | 独占线程，唯一允许拉 GPIO5 的地方                          |
+| `sntp`  | 一次性对时（`sync()` 最长阻塞 60 秒，不能放进 5 秒主循环） |
 
 共享状态是 `Box::leak` 成 `&'static` 的 `Backend`：`Arc<Cfg>`、`PulseHandle`（可克隆的 `SyncSender`）、`Mutex<WifiManager>`、`NetUpWatch`（免锁 `AtomicBool`）、`Mutex<TimeSync>`。
 
@@ -171,6 +171,8 @@ namespace `psw_cfg`。键 `ssid/pass/tx_dbm/pulse_ms/cmd_ttl/status_s/keepalive`
 2. **脉冲只在独立线程里生成**，绝不在 MQTT / 控制台回调里直接拉 GPIO。
 3. `PULSE_MS_MIN` / `PULSE_MS_MAX` 是安全边界，**必须保持 `const`，永不写入 NVS**。脉冲 ≥4000ms 会触发主板强制断电。
 4. 板子**没有自动复位电路**，烧录失败要手动拔 USB。
+5. 禁止滥用`unsafe`,如为了躲避rust检查器,除非有正当需求!
+
 
 ---
 
