@@ -1086,7 +1086,7 @@ mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
 
-    const TOKEN: &str = "REDACTED_TOKEN";
+    const TOKEN: &str = "sk_test_fake_000000000000DEADBEEF";
     const HOST: &str = "lyg.ddns.ge";
 
     fn dnshe() -> DnsheProvider {
@@ -1223,7 +1223,7 @@ mod tests {
         let req = p.build_request(&rec, None).expect("v4 请求应该能构造");
 
         let masked = mask_token(TOKEN);
-        assert_eq!(masked, "sk_live_***");
+        assert_eq!(masked, "sk_test_fake_***");
 
         // 所有可能被打印出来的字符串
         let log_bound: Vec<(&str, String)> = vec![
@@ -1249,7 +1249,7 @@ mod tests {
             if label == &"HttpRequest Debug" || label == &"token_masked" {
                 assert!(!s.contains(TOKEN), "{label} 泄露了完整 token：{s}");
                 assert!(
-                    s.contains("sk_live_"),
+                    s.contains("sk_test_fake_"),
                     "{label} 应该保留前 8 字符用于辨识：{s}"
                 );
             } else {
@@ -1275,12 +1275,12 @@ mod tests {
 
         // header 掩码要保留 scheme
         assert_eq!(
-            mask_header_value("Authorization", "Bearer sk_live_0123456789abcdef"),
-            "Bearer sk_live_***"
+            mask_header_value("Authorization", "Bearer sk_test_fake_000000000000"),
+            "Bearer sk_test_fake_***"
         );
         assert_eq!(
-            mask_header_value("X-DDNS-Token", "sk_live_0123456789abcdef"),
-            "sk_live_***"
+            mask_header_value("X-DDNS-Token", "sk_test_fake_000000000000"),
+            "sk_test_fake_***"
         );
         // 非凭据 header 原样保留
         assert_eq!(
