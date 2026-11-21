@@ -1,4 +1,4 @@
-name: ESP-IDF Rust CI
+name: ESP-IDF Rust 构建验证
 
 on:
   push:
@@ -16,20 +16,22 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Match the version used by cargo-build.cmd on Windows.
-  ESP_IDF_VERSION: 6.1.0
+  # ESP-IDF 上游正式标签是 v6.1，而不是 v6.1.0。
+  ESP_IDF_VERSION: tag:v6.1
+  # ESP32-C3 使用 RISC-V target；显式指定 MCU，避免 esp-idf-sys 自动推断。
+  MCU: esp32c3
 
 jobs:
   linux-build:
-    name: Ubuntu / ESP32-C3
+    name: Ubuntu / ESP32-C3 构建
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
     steps:
-      - name: Checkout
+      - name: 检出仓库
         uses: actions/checkout@v4
 
-      - name: Install Linux build dependencies
+      - name: 安装 Linux 构建依赖
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
@@ -51,23 +53,22 @@ jobs:
             libffi-dev \
             libssl-dev
 
-      - name: Setup Rust toolchain
+      - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: nightly-2026-09-20
           components: rust-src, rustfmt, clippy
 
-      - name: Cache Cargo
+      - name: 缓存 Cargo 依赖
         uses: Swatinem/rust-cache@v2
 
-      - name: Install ldproxy
+      - name: 安装 ldproxy
         run: cargo install ldproxy --locked
 
-      # Linux uses esp-idf-sys/embuild's native tool installation.
-      # Do not set ESP_IDF_TOOLS_INSTALL_DIR=fromenv here: unlike the Windows
-      # wrapper, the GitHub runner starts without a pre-installed ESP-IDF.
-      - name: Cargo check
+      # Linux 使用 esp-idf-sys/embuild 原生安装 ESP-IDF 工具链。
+      # 不设置 ESP_IDF_TOOLS_INSTALL_DIR=fromenv：Runner 初始没有预装 ESP-IDF。
+      - name: Cargo 检查
         run: cargo check --locked
 
-      - name: Release build
+      - name: Release 编译
         run: cargo build --release --locked
