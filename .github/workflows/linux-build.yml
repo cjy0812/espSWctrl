@@ -91,21 +91,19 @@ jobs:
             exit 1
           fi
 
-          # esp-idf-sys 将 ESP-IDF 的 CMake 构建目录放在 Cargo target 下。
-          # 不硬编码 esp-idf-sys 的哈希目录，直接定位实际生成的两个镜像。
-          mapfile -t bootloaders < <(find target -type f -name bootloader.bin -print)
-          mapfile -t partitions < <(find target -type f -name partition-table.bin -print)
+          # cargo check 会在 debug 下生成一套 ESP-IDF 镜像，release build 又会生成一套。
+          # esp-idf-sys 同时在 OUT_DIR 内和 release/build 根目录放置镜像副本。
+          # 固件包必须只取当前 Release 构建目录中的产物，不能跨 debug/release 搜索。
+          bootloader="${target_dir}/build/bootloader.bin"
+          partition_table="${target_dir}/build/partition-table.bin"
 
-          if [[ "${#bootloaders[@]}" -ne 1 ]]; then
-            echo "::error::预期找到唯一的 bootloader.bin，实际找到 ${#bootloaders[@]} 个"
-            printf '%s\n' "${bootloaders[@]}"
-            exit 1
-          fi
-          if [[ "${#partitions[@]}" -ne 1 ]]; then
-            echo "::error::预期找到唯一的 partition-table.bin，实际找到 ${#partitions[@]} 个"
-            printf '%s\n' "${partitions[@]}"
-            exit 1
-          fi
+          for image in "${bootloader}" "${partition_table}"; do
+            if [[ ! -s "${image}" ]]; then
+              echo "::error::未找到 Release 固件组件：${image}"
+              find "${target_dir}/build" -type f \\( -name bootloader.bin -o -name partition-table.bin \\) -print || true
+              exit 1
+            fi
+          done
 
           # esp-idf-sys 的原生安装模式会创建独立 Python 环境。
           # 从已安装环境中选择实际包含 esptool 模块的解释器。
@@ -123,8 +121,8 @@ jobs:
             exit 1
           fi
 
-          cp "${bootloaders[0]}" "${output_dir}/bootloader.bin"
-          cp "${partitions[0]}" "${output_dir}/partition-table.bin"
+          cp "${bootloader}" "${output_dir}/bootloader.bin"
+          cp "${partition_table}" "${output_dir}/partition-table.bin"
 
           "${esptool_python}" -m esptool --chip esp32c3 elf2image \
             --flash-mode dio \
