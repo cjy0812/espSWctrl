@@ -16,15 +16,16 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # ESP-IDF 上游正式标签是 v6.1，而不是 v6.1.0。
+  # 与 Cargo.toml 中的 esp_idf_version = "6.1" 保持一致。
+  # 上游正式标签为 v6.1；不要写成不存在的 v6.1.0。
   ESP_IDF_VERSION: tag:v6.1
-  # ESP32-C3 使用 RISC-V target；显式指定 MCU，避免 esp-idf-sys 自动推断。
+  # ESP32-C3 使用 RISC-V target，显式指定 MCU，避免自动推断。
   MCU: esp32c3
 
 jobs:
   linux-build:
-    name: Ubuntu / ESP32-C3 构建
-    runs-on: ubuntu-latest
+    name: Ubuntu 24.04 / ESP32-C3 构建
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
 
     steps:
