@@ -4,7 +4,47 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".cargo/**"
+      - ".github/workflows/linux-build.yml"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "**/build.rs"
+      - "**/*.rs"
+      - "**/*.c"
+      - "**/*.h"
+      - "**/*.cpp"
+      - "**/*.hpp"
+      - "**/sdkconfig*"
+      - "**/partitions*.csv"
+      - "**/dependencies.lock"
+      - "**/extra-components.toml"
+      - "**/idf_component.yml"
+      - "**/CMakeLists.txt"
+      - "**/Kconfig.projbuild"
+      - "**/component.mk"
+      - "**/rust-toolchain.toml"
   pull_request:
+    paths:
+      - ".cargo/**"
+      - ".github/workflows/linux-build.yml"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "**/build.rs"
+      - "**/*.rs"
+      - "**/*.c"
+      - "**/*.h"
+      - "**/*.cpp"
+      - "**/*.hpp"
+      - "**/sdkconfig*"
+      - "**/partitions*.csv"
+      - "**/dependencies.lock"
+      - "**/extra-components.toml"
+      - "**/idf_component.yml"
+      - "**/CMakeLists.txt"
+      - "**/Kconfig.projbuild"
+      - "**/component.mk"
+      - "**/rust-toolchain.toml"
   workflow_dispatch:
 
 permissions:
@@ -30,7 +70,7 @@ jobs:
 
     steps:
       - name: 检出仓库
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: 安装 Linux 构建依赖
         run: |
@@ -51,8 +91,7 @@ jobs:
             bison \
             gperf \
             libffi-dev \
-            libssl-dev \
-            zip
+            libssl-dev
 
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
@@ -72,7 +111,7 @@ jobs:
       - name: Release 编译
         run: cargo build --release --locked
 
-      - name: 生成 ESP32-C3 烧录固件包
+      - name: 准备 ESP32-C3 烧录固件文件
         shell: bash
         run: |
           set -euo pipefail
@@ -168,12 +207,12 @@ jobs:
           echo "esptool Python：${esptool_python}"
           echo "app.bin 大小：${app_size} 字节"
 
-          (cd dist && zip -qr espSWctrl-esp32c3-firmware.zip espSWctrl-esp32c3)
-
-      - name: 上传 ESP32-C3 固件包
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      # GitHub Artifact 必须使用 ZIP 容器；compression-level: 0 表示容器内文件不再压缩。
+      - name: 上传 ESP32-C3 未压缩固件文件
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: espSWctrl-esp32c3-固件包
-          path: dist/espSWctrl-esp32c3-firmware.zip
+          name: espSWctrl-esp32c3-固件文件
+          path: dist/espSWctrl-esp32c3/
           if-no-files-found: error
+          compression-level: 0
           retention-days: 14
