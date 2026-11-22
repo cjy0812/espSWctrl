@@ -21,6 +21,10 @@ env:
   ESP_IDF_VERSION: tag:v6.1
   # ESP32-C3 使用 RISC-V target，显式指定 MCU，避免自动推断。
   MCU: esp32c3
+  # ESP-IDF 仅在此开关非零时才会将 C/C++ 编译接入 CCache。
+  IDF_CCACHE_ENABLE: "1"
+  # GitHub Runner 是临时机器，CCache 数据目录必须由 Actions 缓存跨运行保存。
+  CCACHE_DIR: ${{ runner.temp }}/ccache
 
 jobs:
   linux-build:
@@ -55,6 +59,23 @@ jobs:
             libssl-dev \
             zip
 
+      - name: 创建 CCache 缓存目录
+        run: mkdir -p "$CCACHE_DIR"
+
+      - name: 恢复 ESP-IDF C/C++ 编译缓存
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-idf-v6.1-esp32c3-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-idf-v6.1-esp32c3-
+
+      - name: 初始化 CCache
+        run: |
+          ccache --version
+          ccache -M 2G
+          ccache -z
+
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@v1
         with:
@@ -70,10 +91,14 @@ jobs:
       # Linux 使用 esp-idf-sys/embuild 原生安装 ESP-IDF 工具链。
       # 不设置 ESP_IDF_TOOLS_INSTALL_DIR=fromenv：Runner 初始没有预装 ESP-IDF。
       - name: Cargo 检查
-        run: cargo check --locked
+        run: cargo check --release --locked
 
       - name: Release 编译
         run: cargo build --release --locked
+
+      - name: 查看 CCache 命中统计
+        if: always()
+        run: ccache -s
 
       - name: 生成 ESP32-C3 烧录固件包
         shell: bash
@@ -100,7 +125,8 @@ jobs:
           for image in "${bootloader}" "${partition_table}"; do
             if [[ ! -s "${image}" ]]; then
               echo "::error::未找到 Release 固件组件：${image}"
-              find "${target_dir}/build" -type f \\( -name bootloader.bin -o -name partition-table.bin \\) -print || true
+              find "${target_dir}/build" -type f -name bootloader.bin -print || true
+              find "${target_dir}/build" -type f -name partition-table.bin -print || true
               exit 1
             fi
           done
@@ -113,11 +139,19 @@ jobs:
               esptool_python="${candidate}"
               break
             fi
-          done < <(find .embuild "$HOME/.espressif" -type f \( -name python -o -name python3 \) -print 2>/dev/null || true)
+          done < <(
+            find .embuild "$HOME/.espressif" -type f -name python -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -type l -name python -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -type f -name python3 -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -type l -name python3 -print 2>/dev/null || true
+          )
 
           if [[ -z "${esptool_python}" ]]; then
             echo "::error::未能在 ESP-IDF Python 环境中找到 esptool"
-            find .embuild "$HOME/.espressif" -maxdepth 5 -type f \( -name python -o -name python3 \) -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -maxdepth 7 -type f -name python -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -maxdepth 7 -type l -name python -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -maxdepth 7 -type f -name python3 -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -maxdepth 7 -type l -name python3 -print 2>/dev/null || true
             exit 1
           fi
 
