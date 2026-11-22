@@ -229,12 +229,43 @@ jobs:
           echo "esptool Python：${esptool_python}"
           echo "app.bin 大小：${app_size} 字节"
 
-      # GitHub Artifact 必须使用 ZIP 容器；compression-level: 0 表示容器内文件不再压缩。
-      - name: 上传 ESP32-C3 未压缩固件文件
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      # upload-artifact v7 的 archive:false 只支持单文件，因此逐个上传原始文件，不生成 ZIP 容器。
+      - name: 上传 bootloader.bin
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: espSWctrl-esp32c3-固件文件
-          path: dist/espSWctrl-esp32c3/
+          path: dist/espSWctrl-esp32c3/bootloader.bin
+          archive: false
           if-no-files-found: error
-          compression-level: 0
+          retention-days: 14
+
+      - name: 上传 partition-table.bin
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/espSWctrl-esp32c3/partition-table.bin
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 上传 app.bin
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/espSWctrl-esp32c3/app.bin
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 上传烧录说明.txt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/espSWctrl-esp32c3/烧录说明.txt
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 上传 SHA256SUMS
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/espSWctrl-esp32c3/SHA256SUMS
+          archive: false
+          if-no-files-found: error
           retention-days: 14
