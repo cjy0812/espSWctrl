@@ -50,7 +50,6 @@ jobs:
             flex \
             bison \
             gperf \
-            ccache \
             libffi-dev \
             libssl-dev \
             zip
