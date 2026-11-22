@@ -1,0 +1,179 @@
+name: ESP-IDF Rust 构建验证
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # 与 Cargo.toml 中的 esp_idf_version = "6.1" 保持一致。
+  # 上游正式标签为 v6.1；不要写成不存在的 v6.1.0。
+  ESP_IDF_VERSION: tag:v6.1
+  # ESP32-C3 使用 RISC-V target，显式指定 MCU，避免自动推断。
+  MCU: esp32c3
+
+jobs:
+  linux-build:
+    name: Ubuntu 24.04 / ESP32-C3 构建
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: 安装 Linux 构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            clang \
+            libclang-dev \
+            cmake \
+            ninja-build \
+            pkg-config \
+            python3 \
+            python3-pip \
+            python3-venv \
+            git \
+            wget \
+            flex \
+            bison \
+            gperf \
+            libffi-dev \
+            libssl-dev \
+            zip
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: nightly-2026-09-20
+          components: rust-src, rustfmt, clippy
+
+      - name: 缓存 Cargo 依赖
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: 安装 ldproxy
+        run: cargo install ldproxy --locked
+
+      # Linux 使用 esp-idf-sys/embuild 原生安装 ESP-IDF 工具链。
+      # 不设置 ESP_IDF_TOOLS_INSTALL_DIR=fromenv：Runner 初始没有预装 ESP-IDF。
+      # Release 构建本身包含完整的 Rust 编译与链接检查，无需额外重复 cargo check。
+      - name: Release 编译
+        run: cargo build --release --locked
+
+      - name: 生成 ESP32-C3 烧录固件包
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_dir="target/riscv32imc-esp-espidf/release"
+          elf="${target_dir}/powerswitch"
+          output_dir="dist/espSWctrl-esp32c3"
+          mkdir -p "${output_dir}"
+
+          if [[ ! -s "${elf}" ]]; then
+            echo "::error::未找到 Release ELF：${elf}"
+            find target -type f -name powerswitch -print || true
+            exit 1
+          fi
+
+          # 只从 Release 构建目录收集 ESP-IDF 镜像，避免误取其他构建配置的产物。
+          bootloader="${target_dir}/build/bootloader.bin"
+          partition_table="${target_dir}/build/partition-table.bin"
+
+          for image in "${bootloader}" "${partition_table}"; do
+            if [[ ! -s "${image}" ]]; then
+              echo "::error::未找到 Release 固件组件：${image}"
+              find "${target_dir}/build" -type f -name bootloader.bin -print || true
+              find "${target_dir}/build" -type f -name partition-table.bin -print || true
+              exit 1
+            fi
+          done
+
+          # esp-idf-sys 的原生安装模式会创建独立 Python 环境。
+          # 从已安装环境中选择实际包含 esptool 模块的解释器。
+          esptool_python=""
+          while IFS= read -r candidate; do
+            if "${candidate}" -c 'import esptool' >/dev/null 2>&1; then
+              esptool_python="${candidate}"
+              break
+            fi
+          done < <(
+            find .embuild "$HOME/.espressif" -type f -name python -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -type l -name python -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -type f -name python3 -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -type l -name python3 -print 2>/dev/null || true
+          )
+
+          if [[ -z "${esptool_python}" ]]; then
+            echo "::error::未能在 ESP-IDF Python 环境中找到 esptool"
+            find .embuild "$HOME/.espressif" -maxdepth 7 -type f -name python -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -maxdepth 7 -type l -name python -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -maxdepth 7 -type f -name python3 -print 2>/dev/null || true
+            find .embuild "$HOME/.espressif" -maxdepth 7 -type l -name python3 -print 2>/dev/null || true
+            exit 1
+          fi
+
+          cp "${bootloader}" "${output_dir}/bootloader.bin"
+          cp "${partition_table}" "${output_dir}/partition-table.bin"
+
+          "${esptool_python}" -m esptool --chip esp32c3 elf2image \
+            --flash-mode dio \
+            --flash-freq 80m \
+            --flash-size 4MB \
+            -o "${output_dir}/app.bin" "${elf}"
+
+          # partitions_singleapp_large 的 factory 分区为 0x180000（1500 KiB）。
+          app_size="$(stat -c '%s' "${output_dir}/app.bin")"
+          if (( app_size > 0x180000 )); then
+            echo "::error::app.bin 大小 ${app_size} 字节，超过 factory 分区上限 1572864 字节"
+            exit 1
+          fi
+
+          cat > "${output_dir}/烧录说明.txt" <<'EOF'
+          ESP32-C3 固件包
+
+          芯片：ESP32-C3
+          Flash：4 MB
+          Flash 模式：DIO
+          Flash 频率：80 MHz
+
+          使用 ESP-IDF v6.1 对应的 esptool，将以下文件写入设备：
+            0x0000    bootloader.bin
+            0x8000    partition-table.bin
+            0x10000   app.bin
+
+          本固件包不包含设备配置、Wi-Fi/MQTT 凭据或任何密钥。
+          烧录前请确认目标设备型号及 Flash 参数。
+          EOF
+
+          (
+            cd "${output_dir}"
+            sha256sum bootloader.bin partition-table.bin app.bin > SHA256SUMS
+          )
+
+          echo "固件文件："
+          ls -lh "${output_dir}"
+          echo "esptool Python：${esptool_python}"
+          echo "app.bin 大小：${app_size} 字节"
+
+          (cd dist && zip -qr espSWctrl-esp32c3-firmware.zip espSWctrl-esp32c3)
+
+      - name: 上传 ESP32-C3 固件包
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: espSWctrl-esp32c3-固件包
+          path: dist/espSWctrl-esp32c3-firmware.zip
+          if-no-files-found: error
+          retention-days: 14

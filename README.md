@@ -53,7 +53,9 @@
 
 ## 构建
 
-**Windows 是当前唯一验证过的构建环境。** 入口是 `cargo-build.cmd`：
+**平台验证状态：Windows 本地构建入口已验证；Ubuntu 24.04 已通过 GitHub Actions 原生 CI 构建验证；macOS 尚未验证。**
+
+Windows 本地构建入口是 `cargo-build.cmd`：
 
 ```bat
 cargo-build.cmd check              :: 类型门禁（约 5 秒，增量）
@@ -123,6 +125,8 @@ MVP 功能已完整实现并通过编译门禁，**MQTT 通路尚未在真机上
 
 ## 构建平台
 
-**仅支持 Windows**。唯一构建入口是 `cargo-build.cmd`（依赖 ESP-IDF 的 Windows 工具链、libclang DLL 与 gnu 宿主链接器）。
+- **Windows**：提供本地构建入口 `cargo-build.cmd`，其环境准备依赖 Windows 版 ESP-IDF 工具链、libclang DLL 与宿主链接器。
+- **Linux**：Ubuntu 24.04 已由 [GitHub Actions 工作流](.github/workflows/linux-build.yml)完成原生 Release 构建及固件打包验证；目前没有面向开发者的 Linux 本地构建包装脚本。
+- **macOS**：尚未验证，不声明支持。
 
-Linux / macOS 当前无构建入口，这是已知限制而非缺陷——补 `cargo-build.sh` 需在有对应环境时验证后才算完成。详见 [`AGENTS.md`](AGENTS.md) 的「平台中立边界」。
+因此，当前验证覆盖 Windows 本地构建和 Ubuntu CI 构建，但不代表已经具备所有操作系统的统一本地构建入口。

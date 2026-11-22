@@ -68,7 +68,13 @@ python scripts\check-portability.py --verbose # 打印白名单命中
 
 它检查四件事：P1 有效行里写死的盘符/UNC/`/mnt/x` 路径（注释与 Markdown 不算——那里记的是历史教训）、P2 `.cmd` 必须纯 ASCII + 全 CRLF、P3 `.gitattributes` 必须强制 `.cmd` 为 CRLF、P4 `rust-toolchain.toml` 必须声明 `rustfmt` + `clippy`。**改完构建脚本或新增平台文件后跑一遍。**
 
-**当前支持的构建平台：仅 Windows。** 入口 `cargo-build.cmd`，日志包装 `run-check.cmd`。Linux / macOS **没有可用构建入口**——这是已知限制，不是待修的 bug。
+**当前构建平台验证状态：**
+
+- **Windows：** 已验证本地构建入口 `cargo-build.cmd`，日志包装为 `run-check.cmd`。
+- **Linux：** Ubuntu 24.04 已通过 `.github/workflows/linux-build.yml` 的原生 GitHub Actions Release 构建与固件打包验证；但仓库目前没有面向开发者的 Linux 本地构建包装脚本。
+- **macOS：** 尚未验证，不声明支持。
+
+注意区分「CI 在 Linux Runner 上构建通过」与「开发者可在 Linux 本地按统一入口构建」：目前前者已验证，后者尚未提供。当前仍不应宣称项目已实现完整跨 OS 本地构建。
 
 新增或修改平台脚本时：
 
