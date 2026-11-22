@@ -22,9 +22,10 @@ log = "0.4"
 embuild = "0.33"
 
 # ---- size profile ----
-# Phase 0 探针实测：这套配置下 WiFi+SNTP+HTTPS+MQTT/TLS 的 app image = 1.128 MB，
-# 分区上限 1.464 MB，余量 354 KB。业务逻辑 + serde_json + console 还要吃一些，
-# 所以这里每一项都不是可选的。
+# 历史体积探针数据已过时，不作为当前固件预算依据。
+# 当前 factory 分区上限由 CI 按 0x180000（1500 KiB）强制检查；
+# README.md 记录最近一次人工测量值，实际产物以对应 CI artifact 为准。
+# 变更 release profile 或依赖后，应重新测量并同步 README.md。
 [profile.release]
 opt-level = "z"
 lto = "fat"
