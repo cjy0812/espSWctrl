@@ -94,6 +94,21 @@ jobs:
       - name: Release 编译
         run: cargo build --release --locked
 
+      - name: 检查 ESP-IDF CMake 缓存配置
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t cache_files < <(find target -type f -name CMakeCache.txt -print 2>/dev/null || true)
+          if (( ${#cache_files[@]} == 0 )); then
+            echo "::warning::未找到 ESP-IDF CMakeCache.txt，无法确认 CCache 是否启用"
+            exit 0
+          fi
+          for cache_file in "${cache_files[@]}"; do
+            echo "检查：${cache_file}"
+            grep -E '^(CCACHE_ENABLE|CMAKE_C_COMPILER_LAUNCHER|CMAKE_CXX_COMPILER_LAUNCHER):' "${cache_file}" || true
+          done
+
       - name: 查看 CCache 命中统计
         if: always()
         run: ccache -s
