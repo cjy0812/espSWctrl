@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: 安装 Linux 构建依赖
         run: |
@@ -63,7 +63,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ccache"
 
       - name: 恢复 ESP-IDF C/C++ 编译缓存
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/ccache
           key: ccache-${{ runner.os }}-idf-v6.1-esp32c3-${{ github.sha }}
@@ -77,13 +77,13 @@ jobs:
           ccache -z
 
       - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: nightly-2026-09-20
           components: rust-src, rustfmt, clippy
 
       - name: 缓存 Cargo 依赖
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: 安装 ldproxy
         run: cargo install ldproxy --locked
@@ -197,7 +197,7 @@ jobs:
           (cd dist && zip -qr espSWctrl-esp32c3-firmware.zip espSWctrl-esp32c3)
 
       - name: 上传 ESP32-C3 固件包
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: espSWctrl-esp32c3-固件包
           path: dist/espSWctrl-esp32c3-firmware.zip
