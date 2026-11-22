@@ -69,12 +69,20 @@ jobs:
             exit 0
           fi
 
+          # 采用文档扩展名白名单：只有所有变更文件都属于纯文档文本时才跳过固件构建。
+          # 未列入白名单的文件一律触发构建，避免新增构建配置/源码类型时漏检。
+          # 混合提交（文档 + 代码/配置）仍然执行完整构建。
           should_build=false
           while IFS= read -r path; do
-            case "${path}" in
-              .cargo/*|.github/workflows/linux-build.yml|Cargo.toml|Cargo.lock|rust-toolchain.toml|*/rust-toolchain.toml|build.rs|*/Cargo.toml|*/Cargo.lock|*/build.rs|src/*|components/*|main/*|*.rs|*.c|*.h|*.cpp|*.hpp|sdkconfig*|*/sdkconfig*|partitions*.csv|*/partitions*.csv|dependencies.lock|*/dependencies.lock|extra-components.toml|*/extra-components.toml|idf_component.yml|*/idf_component.yml|CMakeLists.txt|*/CMakeLists.txt|Kconfig.projbuild|*/Kconfig.projbuild|component.mk|*/component.mk)
+            [[ -z "${path}" ]] && continue
+            lower_path="${path,,}"
+            case "${lower_path}" in
+              *.md|*.mdx|*.markdown|*.rst|*.adoc|*.asciidoc|*.txt)
+                echo "文档白名单命中，跳过固件构建判定：${path}"
+                ;;
+              *)
                 should_build=true
-                echo "检测到构建相关文件：${path}"
+                echo "检测到非文档文件，执行完整构建：${path}"
                 break
                 ;;
             esac
@@ -269,3 +277,40 @@ jobs:
           archive: false
           if-no-files-found: error
           retention-days: 14
+
+  ci-status:
+    name: CI 检查结果
+    needs:
+      - changes
+      - linux-build
+    # 即使固件构建因纯文档变更而跳过，也必须产生一个明确的最终检查状态。
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 汇总检查结果
+        shell: bash
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SHOULD_BUILD: ${{ needs.changes.outputs.should_build }}
+          BUILD_RESULT: ${{ needs.linux-build.result }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${CHANGES_RESULT}" != "success" ]]; then
+            echo "::error::变更检测任务未成功：${CHANGES_RESULT}"
+            exit 1
+          fi
+
+          if [[ "${SHOULD_BUILD}" == "true" ]]; then
+            if [[ "${BUILD_RESULT}" != "success" ]]; then
+              echo "::error::要求执行固件构建，但构建结果为：${BUILD_RESULT}"
+              exit 1
+            fi
+            echo "固件构建已成功。"
+          else
+            if [[ "${BUILD_RESULT}" != "skipped" ]]; then
+              echo "::error::纯文档变更预期跳过构建，实际结果为：${BUILD_RESULT}"
+              exit 1
+            fi
+            echo "仅修改文档白名单文件，已跳过固件构建。"
+          fi
