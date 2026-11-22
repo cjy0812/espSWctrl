@@ -21,8 +21,6 @@ env:
   ESP_IDF_VERSION: tag:v6.1
   # ESP32-C3 使用 RISC-V target，显式指定 MCU，避免自动推断。
   MCU: esp32c3
-  # ESP-IDF 仅在此开关非零时才会将 C/C++ 编译接入 CCache。
-  IDF_CCACHE_ENABLE: "1"
 
 jobs:
   linux-build:
@@ -57,25 +55,6 @@ jobs:
             libssl-dev \
             zip
 
-      - name: 初始化 CCache 缓存目录
-        run: |
-          echo "CCACHE_DIR=$RUNNER_TEMP/ccache" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/ccache"
-
-      - name: 恢复 ESP-IDF C/C++ 编译缓存
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ runner.temp }}/ccache
-          key: ccache-${{ runner.os }}-idf-v6.1-esp32c3-${{ github.sha }}
-          restore-keys: |
-            ccache-${{ runner.os }}-idf-v6.1-esp32c3-
-
-      - name: 初始化 CCache
-        run: |
-          ccache --version
-          ccache -M 2G
-          ccache -z
-
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
@@ -93,25 +72,6 @@ jobs:
       # Release 构建本身包含完整的 Rust 编译与链接检查，无需额外重复 cargo check。
       - name: Release 编译
         run: cargo build --release --locked
-
-      - name: 检查 ESP-IDF CMake 缓存配置
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t cache_files < <(find target -type f -name CMakeCache.txt -print 2>/dev/null || true)
-          if (( ${#cache_files[@]} == 0 )); then
-            echo "::warning::未找到 ESP-IDF CMakeCache.txt，无法确认 CCache 是否启用"
-            exit 0
-          fi
-          for cache_file in "${cache_files[@]}"; do
-            echo "检查：${cache_file}"
-            grep -E '^(CCACHE_ENABLE|CMAKE_C_COMPILER_LAUNCHER|CMAKE_CXX_COMPILER_LAUNCHER):' "${cache_file}" || true
-          done
-
-      - name: 查看 CCache 命中统计
-        if: always()
-        run: ccache -s
 
       - name: 生成 ESP32-C3 烧录固件包
         shell: bash
