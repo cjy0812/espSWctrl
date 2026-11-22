@@ -103,12 +103,24 @@ fn pulse_task(mut pin: PinDriver<'static, Output>, rx: mpsc::Receiver<u16>, busy
         info!("按下电源键：脉冲 {width_ms} ms");
 
         // ---- 唯一操作 GPIO 的地方 ----
-        if pin.set_high().is_ok() {
-            std::thread::sleep(Duration::from_millis(width_ms as u64));
-            let _ = pin.set_low();
-        } else {
-            // 拉高都失败，别让 pin 停在不确定状态
-            let _ = pin.set_low();
+        match pin.set_high() {
+            Ok(()) => {
+                std::thread::sleep(Duration::from_millis(width_ms as u64));
+                if let Err(e) = pin.set_low() {
+                    // GPIO 状态已不可信：不能清除 busy 后继续接收下一次脉冲。
+                    // 触发 panic/设备故障处理，避免把「可能仍为高电平」伪装成完成。
+                    log::error!("GPIO{PIN_PWR_SW} 脉冲结束后拉低失败: {e}");
+                    panic!("GPIO{PIN_PWR_SW} 无法恢复安全低电平");
+                }
+            }
+            Err(e) => {
+                // 拉高失败也尝试恢复低电平；若恢复失败，同样必须 fail-stop。
+                log::error!("GPIO{PIN_PWR_SW} 拉高失败: {e}");
+                if let Err(low_err) = pin.set_low() {
+                    log::error!("GPIO{PIN_PWR_SW} 拉高失败后的安全恢复也失败: {low_err}");
+                    panic!("GPIO{PIN_PWR_SW} 无法确认安全低电平");
+                }
+            }
         }
         // -----------------------------
 
