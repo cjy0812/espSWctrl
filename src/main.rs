@@ -218,16 +218,22 @@ fn time_sync_loop(backend: &'static Backend, time_synced: Arc<AtomicBool>) {
 
 /// 主循环里的一次 DDNS 检查。
 ///
-/// 绝大多数轮次只读几个 NVS 值就返回；只有「该发了」的那一轮才真正
-/// 走 HTTPS。HTTPS 的超时（`DDNS_HTTP_TIMEOUT_S`）远小于 30s 看门狗，
-/// 所以这一次阻塞是安全的。
+/// 非强制更新且未到期时立即返回，不访问 NVS；只有到期或收到强制请求时
+/// 才读取配置并决定是否走 HTTPS。HTTPS 的超时（`DDNS_HTTP_TIMEOUT_S`）
+/// 远小于 30s 看门狗，所以这一次阻塞是安全的。
 ///
 /// 锁纪律：host / token 全部从 `cfg` 读，**不碰 Wi-Fi 互斥锁** ——
 /// 网络 I/O 期间持有 Wi-Fi 锁会让心跳和 `wifi scan` 一起卡死。
 fn ddns_tick(cfg: &Cfg, next_due: &mut Instant) {
-    // 无论后面走不走，先把这个「立刻更新」请求消费掉：
-    // 否则关掉 DDNS 期间敲的 `ddns now` 会在重新打开时突然补发。
+    // 无论后面走不走，先消费「立刻更新」请求：
+    // 否则关闭 DDNS 期间发出的请求会在重新启用时意外补发。
     let forced = DDNS_NOW.swap(false, Ordering::SeqCst);
+
+    // 非强制路径先检查调度时间，避免主循环每 5 秒都访问 NVS 并分配配置字符串。
+    // forced 仍绕过周期限制；随后仍会先检查 enabled，确保禁用时消费并丢弃强制请求。
+    if !forced && Instant::now() < *next_due {
+        return;
+    }
 
     if !cfg.ddns_enabled().unwrap_or(false) {
         if forced {
@@ -260,11 +266,6 @@ fn ddns_tick(cfg: &Cfg, next_due: &mut Instant) {
 
     // 时钟没对上时 TLS 必然因证书有效期失败，没必要发一次注定失败的请求。
     if unix_now() == 0 {
-        return;
-    }
-
-    let now = Instant::now();
-    if !forced && now < *next_due {
         return;
     }
 

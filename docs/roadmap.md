@@ -33,8 +33,8 @@
 
 ## 当前焦点（按依赖顺序）
 
-1. **Phase 5：`src/mqtt.rs` 阶段 1→3** —— MVP 唯一还缺的功能块。前置条件已全部就绪：托管组件进构建、NVS 凭据可读写且已有控制台入口（`mq` / `devid`）、`CmdVerifier` 自洽、`time_synced` 已接线。
-2. **Phase 6：Task WDT** —— 纯安全项，与 MQTT 无依赖，可并行。
+1. **Phase 5：MQTT 真机端到端验证** —— 运行时代码已接线，仍需配置 broker 凭据验证 TLS 握手、订阅、命令与 ACK 全链路；不要将「代码已实现」等同于「线上已验收」。
+2. **Phase 6：Task WDT** —— 尚未实现的安全加固项。脉冲线程 GPIO 状态异常现在采用 fail-stop，但硬件级任务看门狗仍需按 `docs/mqtt-port.md` 阶段 5 规格实施并验证。
 
 > 2026-10-28 已完成：`time_synced` 接线（Phase 2 末项）、`run-check.cmd` 修复与 `cargo-build.cmd check` 基线（Phase 0 遗留）、`mq` / `devid` 控制台命令（Phase 2 末项）。
 
@@ -54,10 +54,10 @@
   - IDF 工具链被重复下载到 `.embuild` → `ESP_IDF_TOOLS_INSTALL_DIR=fromenv`
   - component registry 走代理时 TLS 失败 → 精准 `NO_PROXY` 两个完整主机名，**保留证书校验**
 - [x] 工具链固定 + `rustfmt` / `clippy` 组件声明（2026-10-28 完成，证据：rust-toolchain.toml `components = ["rust-src", "rustfmt", "clippy"]`）
-- [~] 固件体积预算已记录（Cargo.toml:22-25 注释：1.128MB / 上限 1.464MB），但无固件 hash 台账
+- [x] 固件体积门禁与产物台账：CI 按 factory 分区上限 0x180000（1,572,864 bytes / 1,500 KiB）检查；最近一次 Ubuntu CI run #27（commit `92f7810`）生成的 `app.bin` 为 1,325,808 bytes（约 1,294.7 KiB），对应原始 artifact 保留 14 天。每次构建的 SHA256SUMS 随 artifact 上传；历史探针数值不再作为当前预算依据。
 - [x] `run-check.cmd` 修复路径与日志目录（2026-10-28 完成，证据：`run-check.cmd` 改用 `%~dp0` 与 `%CARGO_TARGET_DIR%`）
 - [x] 删除 C 版遗留构建路径（2026-10-28 完成，证据：`main/` 14 个文件、根 `CMakeLists.txt`、`components_esp32c3.lock` 已从 git 删除）。纯 Rust std 模式的官方模板不含这两者，并存会导致 `idf.py build` 编到 C 版。`main/secrets.h` 已备份至仓库外
-- [x] 删除 `rust-probe/` 体积探针（2026-10-28 完成，证据：目录与 `Cargo.toml` 的 workspace exclude 一并移除；结论已固化在 Cargo.toml:22-25 注释）
+- [x] 删除 `rust-probe/` 体积探针（2026-10-28 完成，证据：目录与 `Cargo.toml` 的 workspace exclude 一并移除；当前固件体积改由 Ubuntu CI 的 Release artifact 与 factory 分区上限检查记录）
 - [x] 补齐工程化配置文件（2026-10-28 完成，证据：新增 `README.md`、`.editorconfig`、`.gitattributes`、`rustfmt.toml`、`clippy.toml`）。`.gitattributes` 解决 `cargo-build.cmd` 在索引里存 LF 的问题
 - [x] 建立 lint 门禁（2026-10-28 完成，证据：`cargo fmt --check` exit 0、`cargo clippy -- -Dwarnings` exit 0）。`main.rs:35` 加 `#![deny(unsafe_op_in_unsafe_fn)]`；36 处 MQTT 预留死代码逐点标注 `#[allow(dead_code)] // Phase 5 接线后删除`（不全局 allow，保留死代码信号）；未开 `unreachable_pub`（bin crate 无意义）
 - [x] `.vscode/settings.json` 去掉失效绝对路径（2026-10-28 完成，证据：删掉指向不存在的 `G:\Dev\ESP\v5.5.5\esp-idf` 的 `idf.currentSetup`）
@@ -161,4 +161,4 @@
 1. **device_id 策略已改**：`architecture.md` 曾建议 MAC 派生（`psw-3c84f7`），实际 `consts.rs` 决策改为固定 `pc01` + 后缀 `-esp32`，多设备需求出现再改。
 2. **C 版的 MQTT 退避常量在 Rust 版尚无消费者**：`consts.rs:52-54` 定义 `RECONNECT_BASE_MS/MAX_MS`，`wifi.rs:77` 注释明确这是 MQTT 的退避，Wi-Fi 用自己的 `RECONNECT_IMMEDIATE` 逻辑。且 `RECONNECT_MAX_MS` 在 C 版也从未被使用。
 3. **`cargo-build.cmd` 已于 2026-10-28 修复**：路径全部改为从 `IDF_PATH` / `IDF_TOOLS_PATH` / `IDF_PYTHON_ENV_PATH` 推导。
-4. **`CmdVerifier` 尚未在运行时实例化**：`cmd_verify.rs` 全模块已实现且自洽，但 `main.rs` 只有 `mod cmd_verify;`，没有任何 `CmdVerifier::new`。
+4. **MQTT 已接入运行时**：`mqtt.rs` 构造并独占持有 `CmdVerifier`，命令进入 `handle_command` 后调用 `verify()`。当前剩余事项是 broker 真机端到端验收，而不是运行时接线。
