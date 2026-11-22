@@ -1,0 +1,18 @@
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    # 等待新版本发布 7 天后再创建常规版本更新 PR。
+    # 安全更新不受此冷却期影响。
+    cooldown:
+      default-days: 7
+    # 将 GitHub Actions 更新合并为一个 PR，减少更新通知数量。
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "CI"
