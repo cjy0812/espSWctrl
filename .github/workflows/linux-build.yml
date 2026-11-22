@@ -72,12 +72,19 @@ jobs:
           # 采用文档扩展名白名单：只有所有变更文件都属于纯文档文本时才跳过固件构建。
           # 未列入白名单的文件一律触发构建，避免新增构建配置/源码类型时漏检。
           # 混合提交（文档 + 代码/配置）仍然执行完整构建。
+          # 无变更列表属于异常/边界情况，保守执行构建，避免静默漏检。
+          if [[ -z "${changed_files}" ]]; then
+            echo "::warning::变更文件列表为空，保守地执行完整构建"
+            echo "should_build=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
           should_build=false
           while IFS= read -r path; do
             [[ -z "${path}" ]] && continue
             lower_path="${path,,}"
             case "${lower_path}" in
-              *.md|*.mdx|*.markdown|*.rst|*.adoc|*.asciidoc|*.txt)
+              *.md|*.mdx|*.markdown|*.rst|*.adoc|*.asciidoc)
                 echo "文档白名单命中，跳过固件构建判定：${path}"
                 ;;
               *)
