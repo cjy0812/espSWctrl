@@ -100,7 +100,7 @@ $t  = "$env:CARGO_TARGET_DIR\riscv32imc-esp-espidf\release"
 
 ESP32-C3 原生 USB-JTAG 通常能自动进下载模式，不用手按 BOOT。板子**没有自动复位电路**，烧录失败要拔插 USB 重试。
 
-镜像大小上限 1500 KB（`partitions_singleapp_large.csv` 的 factory 分区）。当前约 1295 KB，余量 205 KB。超限时 `write_flash` 会写入失败。
+镜像大小上限 1,572,864 bytes（1,500 KiB，`partitions_singleapp_large.csv` 的 factory 分区）。最近一次 Ubuntu CI Release 构建（run #27，2026-11-22）生成的 `app.bin` 为 1,325,808 bytes（约 1,294.7 KiB），距分区上限还余 247,056 bytes（约 241.3 KiB）。后续构建以对应 CI artifact 的实际大小为准；超限会由 CI 在打包阶段直接失败。
 
 ## 项目状态
 
