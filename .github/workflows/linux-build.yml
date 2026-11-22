@@ -23,8 +23,6 @@ env:
   MCU: esp32c3
   # ESP-IDF 仅在此开关非零时才会将 C/C++ 编译接入 CCache。
   IDF_CCACHE_ENABLE: "1"
-  # GitHub Runner 是临时机器，CCache 数据目录必须由 Actions 缓存跨运行保存。
-  CCACHE_DIR: ${{ runner.temp }}/ccache
 
 jobs:
   linux-build:
@@ -59,8 +57,10 @@ jobs:
             libssl-dev \
             zip
 
-      - name: 创建 CCache 缓存目录
-        run: mkdir -p "$CCACHE_DIR"
+      - name: 初始化 CCache 缓存目录
+        run: |
+          echo "CCACHE_DIR=$RUNNER_TEMP/ccache" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/ccache"
 
       - name: 恢复 ESP-IDF C/C++ 编译缓存
         uses: actions/cache@v4
@@ -90,9 +90,7 @@ jobs:
 
       # Linux 使用 esp-idf-sys/embuild 原生安装 ESP-IDF 工具链。
       # 不设置 ESP_IDF_TOOLS_INSTALL_DIR=fromenv：Runner 初始没有预装 ESP-IDF。
-      - name: Cargo 检查
-        run: cargo check --release --locked
-
+      # Release 构建本身包含完整的 Rust 编译与链接检查，无需额外重复 cargo check。
       - name: Release 编译
         run: cargo build --release --locked
 
@@ -116,9 +114,7 @@ jobs:
             exit 1
           fi
 
-          # cargo check 会在 debug 下生成一套 ESP-IDF 镜像，release build 又会生成一套。
-          # esp-idf-sys 同时在 OUT_DIR 内和 release/build 根目录放置镜像副本。
-          # 固件包必须只取当前 Release 构建目录中的产物，不能跨 debug/release 搜索。
+          # 只从 Release 构建目录收集 ESP-IDF 镜像，避免误取其他构建配置的产物。
           bootloader="${target_dir}/build/bootloader.bin"
           partition_table="${target_dir}/build/partition-table.bin"
 
