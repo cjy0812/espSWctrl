@@ -4,47 +4,7 @@ on:
   push:
     branches:
       - main
-    paths:
-      - ".cargo/**"
-      - ".github/workflows/linux-build.yml"
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      - "**/build.rs"
-      - "**/*.rs"
-      - "**/*.c"
-      - "**/*.h"
-      - "**/*.cpp"
-      - "**/*.hpp"
-      - "**/sdkconfig*"
-      - "**/partitions*.csv"
-      - "**/dependencies.lock"
-      - "**/extra-components.toml"
-      - "**/idf_component.yml"
-      - "**/CMakeLists.txt"
-      - "**/Kconfig.projbuild"
-      - "**/component.mk"
-      - "**/rust-toolchain.toml"
   pull_request:
-    paths:
-      - ".cargo/**"
-      - ".github/workflows/linux-build.yml"
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      - "**/build.rs"
-      - "**/*.rs"
-      - "**/*.c"
-      - "**/*.h"
-      - "**/*.cpp"
-      - "**/*.hpp"
-      - "**/sdkconfig*"
-      - "**/partitions*.csv"
-      - "**/dependencies.lock"
-      - "**/extra-components.toml"
-      - "**/idf_component.yml"
-      - "**/CMakeLists.txt"
-      - "**/Kconfig.projbuild"
-      - "**/component.mk"
-      - "**/rust-toolchain.toml"
   workflow_dispatch:
 
 permissions:
@@ -63,8 +23,70 @@ env:
   MCU: esp32c3
 
 jobs:
+  changes:
+    name: 判断是否需要固件构建
+    runs-on: ubuntu-24.04
+    outputs:
+      should-build: ${{ steps.filter.outputs.should-build }}
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: 检查变更文件
+        id: filter
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # 手动触发始终执行完整构建。
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "should-build=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${BASE_SHA}"
+          else
+            base_sha="${BEFORE_SHA}"
+          fi
+
+          # 首次推送或缺少基准提交时保守地执行构建，避免漏检。
+          if [[ -z "${base_sha}" || "${base_sha}" =~ ^0+$ ]]; then
+            echo "should-build=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if ! changed_files="$(git diff --name-only "${base_sha}" "${HEAD_SHA}")"; then
+            echo "::warning::无法计算变更文件，保守地执行完整构建"
+            echo "should-build=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          should_build=false
+          while IFS= read -r path; do
+            case "${path}" in
+              .cargo/*|.github/workflows/linux-build.yml|              Cargo.toml|Cargo.lock|rust-toolchain.toml|build.rs|              */Cargo.toml|*/Cargo.lock|*/build.rs|              src/*|components/*|main/*|              *.rs|*.c|*.h|*.cpp|*.hpp|              sdkconfig*|*/sdkconfig*|              partitions*.csv|*/partitions*.csv|              dependencies.lock|*/dependencies.lock|              extra-components.toml|*/extra-components.toml|              idf_component.yml|*/idf_component.yml|              CMakeLists.txt|*/CMakeLists.txt|              Kconfig.projbuild|*/Kconfig.projbuild|              component.mk|*/component.mk)
+                should_build=true
+                echo "检测到构建相关文件：${path}"
+                break
+                ;;
+            esac
+          done <<< "${changed_files}"
+
+          echo "should-build=${should_build}" >> "${GITHUB_OUTPUT}"
+          echo "是否执行固件构建：${should_build}"
+
   linux-build:
     name: Ubuntu 24.04 / ESP32-C3 构建
+    needs: changes
+    if: needs.changes.outputs.should-build == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
 
