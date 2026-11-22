@@ -33,8 +33,8 @@
 
 ## 当前焦点（按依赖顺序）
 
-1. **Phase 5：`src/mqtt.rs` 阶段 1→3** —— MVP 唯一还缺的功能块。前置条件已全部就绪：托管组件进构建、NVS 凭据可读写且已有控制台入口（`mq` / `devid`）、`CmdVerifier` 自洽、`time_synced` 已接线。
-2. **Phase 6：Task WDT** —— 纯安全项，与 MQTT 无依赖，可并行。
+1. **Phase 5：MQTT 真机端到端验证** —— 运行时代码已接线，仍需配置 broker 凭据验证 TLS 握手、订阅、命令与 ACK 全链路；不要将「代码已实现」等同于「线上已验收」。
+2. **Phase 6：Task WDT** —— 尚未实现的安全加固项。脉冲线程 GPIO 状态异常现在采用 fail-stop，但硬件级任务看门狗仍需按 `docs/mqtt-port.md` 阶段 5 规格实施并验证。
 
 > 2026-10-28 已完成：`time_synced` 接线（Phase 2 末项）、`run-check.cmd` 修复与 `cargo-build.cmd check` 基线（Phase 0 遗留）、`mq` / `devid` 控制台命令（Phase 2 末项）。
 
@@ -161,4 +161,4 @@
 1. **device_id 策略已改**：`architecture.md` 曾建议 MAC 派生（`psw-3c84f7`），实际 `consts.rs` 决策改为固定 `pc01` + 后缀 `-esp32`，多设备需求出现再改。
 2. **C 版的 MQTT 退避常量在 Rust 版尚无消费者**：`consts.rs:52-54` 定义 `RECONNECT_BASE_MS/MAX_MS`，`wifi.rs:77` 注释明确这是 MQTT 的退避，Wi-Fi 用自己的 `RECONNECT_IMMEDIATE` 逻辑。且 `RECONNECT_MAX_MS` 在 C 版也从未被使用。
 3. **`cargo-build.cmd` 已于 2026-10-28 修复**：路径全部改为从 `IDF_PATH` / `IDF_TOOLS_PATH` / `IDF_PYTHON_ENV_PATH` 推导。
-4. **`CmdVerifier` 尚未在运行时实例化**：`cmd_verify.rs` 全模块已实现且自洽，但 `main.rs` 只有 `mod cmd_verify;`，没有任何 `CmdVerifier::new`。
+4. **MQTT 已接入运行时**：`mqtt.rs` 构造并独占持有 `CmdVerifier`，命令进入 `handle_command` 后调用 `verify()`。当前剩余事项是 broker 真机端到端验收，而不是运行时接线。
